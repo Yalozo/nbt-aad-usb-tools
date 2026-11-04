@@ -1,0 +1,43 @@
+name: Windows application
+on:
+  push:
+    paths:
+      - 'windows/**'
+      - 'nbt-aad.sh'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - 'nbt-aad.sh'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+      - name: Build and test standalone application
+        shell: powershell
+        run: .\windows\build.ps1
+      - name: Package Windows download
+        shell: powershell
+        run: |
+          Copy-Item windows\README.md windows\dist\README.md
+          Copy-Item LICENSE windows\dist\LICENSE.txt
+          Push-Location windows
+          python collect_licenses.py
+          Pop-Location
+          python -m pip freeze | Out-File -Encoding utf8 windows\dist\dependencies.txt
+          Get-FileHash windows\dist\NBT-AAD-PC.exe -Algorithm SHA256 | Format-List | Out-File -Encoding utf8 windows\dist\SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NBT-AAD-PC-Windows-x64
+          path: windows/dist/*
+          if-no-files-found: error
+          retention-days: 90
