@@ -1,0 +1,13 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check POSIX shell syntax
+        run: sh -n nbt-aad.sh
+      - name: Run isolated filesystem tests
+        run: python3 -m unittest discover -s tests -v
