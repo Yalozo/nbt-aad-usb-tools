@@ -41,6 +41,7 @@ class InstallerTest(unittest.TestCase):
             "BACKUPS": self.root / "opt/backups",
             "VAR_BACKUPS": self.root / "var/opt/backups",
             "MNT": self.root / "mnt",
+            "SOURCE_ROOT": self.root / "shmem",
             "LOCK": self.root / "shmem/installer.lock",
         }
         for path in self.paths.values():
@@ -180,6 +181,52 @@ class InstallerTest(unittest.TestCase):
         shutil.rmtree(self.usb)
         self.run_script("uninstall")
         self.assertFalse(self.paths["AA"].exists())
+
+    def ssh_payload(self):
+        stage = self.paths['SOURCE_ROOT'] / ('nbt-aad-pc-' + 'a' * 32)
+        shutil.copytree(self.usb, stage)
+        shutil.rmtree(self.usb)
+        return stage
+
+    def test_ssh_install_without_any_usb(self):
+        stage = self.ssh_payload()
+        self.run_script('install', '--source', str(stage))
+        self.assertEqual((self.paths['AA'] / 'nbt-aad').read_bytes(), elf())
+        self.assertTrue((self.backup() / 'COMMITTED').exists())
+
+    def test_ssh_source_dry_run_is_read_only(self):
+        stage = self.ssh_payload()
+        self.old_install()
+        before = self.snapshot()
+        self.run_script('install', '--source', str(stage), '--dry-run')
+        self.assertEqual(self.snapshot(), before)
+
+    def test_ssh_source_forwarding_from_jacinto(self):
+        stage = self.ssh_payload()
+        self.run_script('install', '--source', str(stage), TEST_NODE='hu-jacinto')
+        self.assertTrue((self.backup() / 'COMMITTED').exists())
+
+    def test_ssh_source_update_and_uninstall(self):
+        stage = self.ssh_payload()
+        self.old_install()
+        self.run_script('install', '--source', str(stage))
+        self.assertEqual((self.paths['SETTINGS'] / 'spp-model').read_text(), 'phone-open')
+        self.run_script('uninstall', '--source', str(stage), '--restart-hmi')
+        self.assertFalse(self.paths['AA'].exists())
+        self.assertIn('hmi', self.calls.read_text())
+
+    def test_ssh_source_rejects_wrong_path_tokens_and_symlinks(self):
+        stage = self.ssh_payload()
+        for source in (self.root, stage.parent / 'nbt-aad-pc-short',
+                       stage.parent / ('nbt-aad-pc-' + 'z' * 32),
+                       str(stage) + '/../../other'):
+            with self.subTest(source=str(source)):
+                self.run_script('install', '--source', str(source), ok=False)
+        self.run_script('install', '--source', str(stage), '--usb', str(self.usb), ok=False)
+        link = stage.parent / ('nbt-aad-pc-' + 'b' * 32)
+        link.symlink_to(stage)
+        self.run_script('install', '--source', str(link), ok=False)
+        self.assertFalse(self.calls.exists())
 
     def test_status_is_read_only(self):
         self.old_install()
