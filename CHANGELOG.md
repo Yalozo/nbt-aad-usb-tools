@@ -8,7 +8,7 @@
 - README entry commands locate the script through `/net/hu-omap/mnt/umass*` so no manual node switch is needed.
 - Before `--restart-hmi`, release the installation lock and sync completed file operations. An unsuccessful transaction or dry run never requests a restart.
 - `--restart-hmi` continues to mean the documented `OnOffDSICommander appreset`; a whole-unit/power-cycle equivalent is not implemented or claimed.
-- Added integration tests for forwarding and restart ordering. Hardware validation remains pending.
+- Added integration tests for forwarding and restart ordering.
 
 ## 0.1.0
 
