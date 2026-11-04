@@ -7,7 +7,7 @@ LC_ALL=C
 export LC_ALL
 umask 077
 
-VERSION=0.2.0
+VERSION=0.3.0
 REMOTE_NODE=/net/hu-omap
 FS_ROOT=/fs/sda0
 AA=/opt/aa
@@ -16,11 +16,13 @@ SETTINGS=/var/opt/aa
 BACKUPS=/opt/nbt-aad-usb-tools-backups
 VAR_BACKUPS=/var/opt/nbt-aad-usb-tools-backups
 MNT=/mnt
+SOURCE_ROOT=/dev/shmem
 LOCK=/dev/shmem/nbt-aad-usb-tools.lock
 FILES='libNbtAad.so NbtAad.manifest NbtAad.xml NbtAad_ALL_Texts.zip NbtAad_ALL_Images.zip'
 
 ACTION=
 USB=
+SOURCE=
 PAYLOAD=
 DRY_RUN=0
 RESTART=0
@@ -39,9 +41,10 @@ exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
 usage() {
     cat <<'EOF'
-NBT-AAD USB Tools 0.2.0
+NBT-AAD USB Tools 0.3.0
 Usage: sh nbt-aad.sh install|uninstall|status [options]
   --usb /mnt/umass...   Select one USB drive explicitly
+  --source PATH        Use a private /dev/shmem/nbt-aad-pc-<32 hex> SSH upload
   --dry-run            Validate and show the plan without changing anything
   --restart-hmi        Run OnOffDSICommander appreset after successful changes
   --help               Show this help
@@ -64,6 +67,9 @@ parse_args() {
         --usb)
             [ "$#" -ge 2 ] || die '--usb needs a path.'
             USB=$2; shift ;;
+        --source)
+            [ "$#" -ge 2 ] || die '--source needs a path.'
+            SOURCE=$2; shift ;;
         --dry-run) DRY_RUN=1 ;;
         --restart-hmi) RESTART=1 ;;
         --help|-h) usage; exit 0 ;;
@@ -153,7 +159,18 @@ find_payload() {
     printf '%s\n' "$found"
 }
 
-if [ -n "$USB" ]; then
+if [ -n "$SOURCE" ]; then
+    [ -z "$USB" ] || die '--source and --usb cannot be combined.'
+    case "$SOURCE" in "$SOURCE_ROOT"/nbt-aad-pc-*) ;; *) die 'Invalid SSH upload path.' ;; esac
+    token=${SOURCE#"$SOURCE_ROOT"/nbt-aad-pc-}
+    [ "${#token}" -eq 32 ] || die 'Invalid SSH upload token length.'
+    case "$token" in *[!a-f0-9]*) die 'Invalid SSH upload token.' ;; esac
+    [ -d "$SOURCE" ] && [ ! -L "$SOURCE" ] || die 'SSH upload is not a real directory.'
+    USB=$SOURCE
+    if [ "$ACTION" = install ]; then
+        PAYLOAD=$(find_payload "$USB") || die 'No complete plugin folder in the SSH upload.'
+    fi
+elif [ -n "$USB" ]; then
     USB=${USB%/}
     case "$USB" in "$MNT"/umass*) ;; *) die '--usb must be an immediate /mnt/umass... directory.' ;; esac
     rest=${USB#"$MNT"/}
@@ -291,8 +308,7 @@ mkdir "$LOCK" 2>/dev/null || die "Another run or stale lock exists: $LOCK (see R
 LOCKED=1
 printf '%s\n' "$$" > "$LOCK/pid"
 
-# Match the official install guide, on the local hu-omap node. A full head-unit
-# reboot afterwards restores the usual mount state; HMI appreset is not that reboot.
+# Match the official install guide on the local hu-omap node.
 mount -o remount rw "$FS_ROOT" || die 'Cannot remount the application filesystem writable.'
 mkdir -p "$BACKUPS"
 stamp=$(date '+%Y%m%d-%H%M%S')
@@ -315,7 +331,7 @@ if [ "$ACTION" = install ]; then
         chmod 644 "$BACKUP/staged-plugin/$item"
         cmp -s "$PAYLOAD/$item" "$BACKUP/staged-plugin/$item" || die "Copy verification failed: $item"
     done
-    say 'Six release files staged and compared with the USB originals.'
+    say 'Six release files staged and compared with the source originals.'
 fi
 
 # File staging is finished before stopping the running daemon. Read the list
@@ -364,7 +380,7 @@ if [ -n "$USB" ]; then
     cp "$LOG" "$USB/nbt-aad-tools-${BACKUP##*/}.log" 2>/dev/null || say 'USB log copy unavailable; use operation.log in the backup.'
 fi
 if [ "$RESTART" -eq 1 ]; then
-    say 'Restarting the HMI with OnOffDSICommander appreset. The SSH connection may close.'
+    say 'Restarting the head unit with OnOffDSICommander appreset. The SSH connection may close.'
     # A reset may terminate this shell before its EXIT trap. File changes are
     # committed; persist logs and release the operation lock before requesting it.
     if ! release_lock; then
@@ -374,6 +390,5 @@ if [ "$RESTART" -eq 1 ]; then
     sync || { say 'Final sync failed. HMI restart skipped; reboot manually after inspection.'; exit 3; }
     OnOffDSICommander appreset || { say 'Files installed/removed, but HMI restart failed. Reboot manually.'; exit 3; }
 else
-    say 'Reboot the head unit (hold its power button for about 30 seconds).'
+    say 'Reboot the head unit after successful changes.'
 fi
-say 'After HMI-only appreset the filesystem can remain writable; a full reboot is recommended.'
