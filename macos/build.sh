@@ -7,7 +7,16 @@ PYTHON_BIN=${PYTHON_BIN:-python3}
 cd "$MAC_DIR"
 "$PYTHON_BIN" -m venv .venv
 BUILD_PYTHON="$MAC_DIR/.venv/bin/python"
-"$BUILD_PYTHON" -m pip install -r "$REPO_DIR/windows/requirements-build.txt"
+if [ "$(uname -m)" = x86_64 ]; then
+    bash build_crypto.sh
+    export OPENSSL_DIR="$MAC_DIR/build/openssl-prefix"
+    export OPENSSL_STATIC=1
+    export OPENSSL_NO_VENDOR=1
+    export MACOSX_DEPLOYMENT_TARGET=13.0
+    "$BUILD_PYTHON" -m pip install --no-cache-dir --no-binary=cryptography -r requirements-build.txt
+else
+    "$BUILD_PYTHON" -m pip install --only-binary=cryptography -r requirements-build.txt
+fi
 cd "$REPO_DIR/windows"
 "$BUILD_PYTHON" -m unittest discover -s tests -v
 cd "$MAC_DIR"
@@ -19,6 +28,9 @@ codesign --verify --deep --strict --verbose=2 dist/NBT-AAD-PC.app
 cp README.md dist/README.md
 cp "$REPO_DIR/LICENSE" dist/LICENSE.txt
 "$BUILD_PYTHON" "$REPO_DIR/windows/collect_licenses.py"
+if [ -f "$MAC_DIR/build/openssl-prefix/OPENSSL-LICENSE.txt" ]; then
+    cp "$MAC_DIR/build/openssl-prefix/OPENSSL-LICENSE.txt" dist/
+fi
 "$BUILD_PYTHON" -m pip freeze > dist/dependencies.txt
 MAC_ARCH=$(uname -m)
 PACKAGE_DIR="$MAC_DIR/package"
@@ -26,6 +38,7 @@ mkdir -p "$PACKAGE_DIR"
 # ditto preserves framework symlinks and bundle permissions inside the ZIP.
 ditto -c -k --sequesterRsrc --keepParent dist/NBT-AAD-PC.app "$PACKAGE_DIR/NBT-AAD-PC-macOS-$MAC_ARCH.zip"
 cp dist/README.md dist/LICENSE.txt dist/THIRD-PARTY-NOTICES.txt dist/dependencies.txt "$PACKAGE_DIR/"
+if [ -f dist/OPENSSL-LICENSE.txt ]; then cp dist/OPENSSL-LICENSE.txt "$PACKAGE_DIR/"; fi
 cd "$PACKAGE_DIR"
 shasum -a 256 "NBT-AAD-PC-macOS-$MAC_ARCH.zip" > SHA256.txt
 echo "Ready: $PACKAGE_DIR/NBT-AAD-PC-macOS-$MAC_ARCH.zip"
