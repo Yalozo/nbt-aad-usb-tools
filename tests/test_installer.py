@@ -50,6 +50,8 @@ class InstallerTest(unittest.TestCase):
             # constant into /dev/shmem cannot silently acquire host semantics.
             "SOURCE_ROOT": mapped_constant('SOURCE_ROOT'),
             "LOCK": mapped_constant('LOCK'),
+            "RAM": mapped_constant('RAM'),
+            "TMP": self.root / 'tmp',
         }
         for path in self.paths.values():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -605,6 +607,86 @@ class InstallerTest(unittest.TestCase):
         self.assertTrue((self.backup() / 'COMMITTED').exists())
         self.assertFalse(self.paths['LOCK'].exists())
         self.assertFalse(list(self.root.rglob('nbt-aad-header-check-*')))
+
+    def test_keep_configs_then_reinstall_retains_env_and_phone_settings(self):
+        self.old_install()
+        self.use_confirmed_minimal_path()
+        self.run_script('uninstall', '--keep-config')
+        self.assertFalse((self.paths['AA'] / 'nbt-aad').exists())
+        self.assertFalse(self.paths['PLUGIN'].exists())
+        self.assertEqual((self.paths['AA'] / 'nbt-aad.env').read_text(), 'NBT_VID_DPI=152\n')
+        self.assertEqual((self.paths['SETTINGS'] / 'spp-model').read_text(), 'phone-open')
+        self.assertTrue((self.backup() / 'aa/nbt-aad').exists())
+        self.run_script('install')
+        self.assertTrue((self.paths['AA'] / 'nbt-aad').exists())
+        self.assertEqual((self.paths['SETTINGS'] / 'spp-model').read_text(), 'phone-open')
+
+    def test_keep_configs_rolls_back_if_preserved_directory_cannot_be_deployed(self):
+        self.old_install()
+        self.fail_rename('/staged-aa', '/opt/aa')
+        self.run_script('uninstall', '--keep-config', ok=False)
+        self.assert_old_intact()
+
+    def test_purge_plan_is_readonly_and_cleans_backups_without_installed_app(self):
+        self.paths['BACKUPS'].mkdir()
+        (self.paths['BACKUPS'] / 'old').write_text('old backup')
+        before = self.snapshot()
+        result = self.run_script('uninstall', '--purge', '--dry-run')
+        self.assertIn(str(self.paths['BACKUPS']), result.stdout)
+        self.assertEqual(before, self.snapshot())
+        self.run_script('uninstall', '--purge')
+        self.assertFalse(self.paths['BACKUPS'].exists())
+
+    def test_purge_cleans_scoped_files_preserves_unrelated_and_releases_lock(self):
+        self.old_install()
+        self.emulate_flat_shmem()
+        stage = self.ssh_payload()
+        stale = stage.parent / ('nbt-aad-pc-' + 'b' * 32)
+        stale.mkdir()
+        (stale / 'nbt-aad.sh').write_text('stale')
+        malformed = stage.parent / 'nbt-aad-pc-keep-me'
+        malformed.mkdir()
+        (malformed / 'unrelated').write_text('keep')
+        for key in ('RAM', 'TMP'):
+            self.paths[key].mkdir(exist_ok=True)
+        for name in ('nbt-aad.log', 'nbt-aad-state', 'other-app.log'):
+            (self.paths['RAM'] / name).write_text('data')
+        other = self.root / 'other-app'
+        other.mkdir()
+        (other / 'keep').write_text('keep')
+        link = stage.parent / ('nbt-aad-pc-' + 'c' * 32)
+        link.symlink_to(other, target_is_directory=True)
+        self.run_script('uninstall', '--purge', '--source', str(stage), '--restart-hmi')
+        for key in ('AA', 'PLUGIN', 'SETTINGS', 'BACKUPS', 'VAR_BACKUPS', 'LOCK'):
+            self.assertFalse(self.paths[key].exists(), key)
+        self.assertFalse(stage.exists())
+        self.assertFalse(stale.exists())
+        self.assertFalse(link.is_symlink())
+        self.assertTrue((other / 'keep').exists())
+        self.assertTrue((malformed / 'unrelated').exists())
+        self.assertFalse((self.paths['RAM'] / 'nbt-aad.log').exists())
+        self.assertFalse((self.paths['RAM'] / 'nbt-aad-state').exists())
+        self.assertTrue((self.paths['RAM'] / 'other-app.log').exists())
+        self.assertIn('hmi', self.calls.read_text())
+
+    def test_purge_failure_does_not_claim_success_or_restart_and_can_retry(self):
+        self.old_install()
+        real_rm = shutil.which('rm')
+        self.stub('rm', 'case "$2" in */opt/backups) exit 1 ;; esac\n'
+                  'exec ' + shlex.quote(real_rm) + ' "$@"')
+        result = self.run_script('uninstall', '--purge', '--restart-hmi', ok=False)
+        self.assertNotIn('SUCCESS:', result.stdout)
+        self.assertIn('Cleanup incomplete', result.stderr)
+        self.assertFalse(self.paths['LOCK'].exists())
+        self.assertNotIn('hmi', self.calls.read_text())
+        (self.bin / 'rm').unlink()
+        self.run_script('uninstall', '--purge')
+        self.assertFalse(self.paths['BACKUPS'].exists())
+
+    def test_removal_modes_cannot_be_combined_or_used_on_install(self):
+        for args in [('uninstall', '--keep-config', '--purge'), ('install', '--purge')]:
+            self.run_script(*args, ok=False)
+        self.assertFalse(self.calls.exists())
 
     def test_unwritable_source_header_checks_fail_before_touching_live_files(self):
         self.old_install()
