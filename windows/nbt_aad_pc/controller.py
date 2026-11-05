@@ -6,6 +6,7 @@ import shlex
 import uuid
 from .releases import PackageError
 from .ssh import RemoteError, RemoteExitError, Session
+from .installed import installed_versions
 
 
 @dataclass
@@ -88,10 +89,12 @@ class Installer:
         self.script, self.state = Path(script), Path(state)
         self.log, self.confirm, self.session_factory = log, confirm, session_factory
 
-    def execute(self, action, connection, package=None, reboot=True):
+    def execute(self, action, connection, package=None, reboot=True, removal='keep'):
         if action not in ('install', 'uninstall', 'status', 'restart'):
             raise ValueError('Неизвестная операция.')
         connection.validate()
+        if removal not in ('keep', 'purge'):
+            raise ValueError('Неизвестный режим удаления.')
         script, files = b'', {}
         if action != 'restart':
             script = self.script.read_bytes()
@@ -118,7 +121,9 @@ class Installer:
             if action == 'status':
                 # No staging or writes to the HU in status mode.
                 command = on_omap(node, '/bin/sh -s -- status')
-                return session.run(command, data=script).decode('utf-8', errors='replace')
+                status = session.run(command, data=script).decode('utf-8', errors='replace')
+                versions = installed_versions(session, node, self.state / 'packages', self.log)
+                return versions + '\n\n' + status
             stage = '/var/opt/nbt-aad-pc-' + uuid.uuid4().hex
             target = remote_path(node, stage)
             session.run('umask 077; mkdir ' + shlex.quote(target) +
@@ -127,6 +132,8 @@ class Installer:
                 self.log('Передача и проверка %s (%s/%s)' % (name, index, len(files)))
                 session.upload(target + '/' + name, data)
             command = '/bin/sh ' + shlex.quote(target + '/nbt-aad.sh') + ' ' + action + ' --source ' + shlex.quote(stage)
+            if action == 'uninstall':
+                command += ' --keep-config' if removal == 'keep' else ' --purge'
             self.log('Проверка установки без изменений…')
             validation = session.run(command + ' --dry-run')
             if b'DRY RUN: validation passed' not in validation and b'Already uninstalled.' not in validation:
@@ -138,17 +145,24 @@ class Installer:
                 raise RemoteError('Нет подтверждения успешной операции. Проверьте журнал.')
             # Independently verify the resulting paths on the actual OMAP node.
             present = 'test -s /opt/aa/nbt-aad && test -s /opt/hmi/ID5/data/ro/Plugins/NbtAad/libNbtAad.so'
-            absent = 'test ! -e /opt/aa && test ! -e /opt/hmi/ID5/data/ro/Plugins/NbtAad && test ! -e /var/opt/aa'
+            absent = ('test ! -e /opt/aa/nbt-aad && test ! -e /opt/hmi/ID5/data/ro/Plugins/NbtAad'
+                      if removal == 'keep' else
+                      'test ! -e /opt/aa && test ! -e /opt/hmi/ID5/data/ro/Plugins/NbtAad && '
+                      'test ! -e /var/opt/aa && test ! -e /opt/nbt-aad-usb-tools-backups && '
+                      'test ! -e /var/opt/nbt-aad-usb-tools-backups')
             session.run(on_omap(node, present if action == 'install' else absent), stream=False)
             completed = True
-            self.log('Результат на ГУ проверен. Резервные копии остаются на ГУ.')
+            self.log('Результат на ГУ проверен. ' + ('Резервные копии удалены.'
+                     if action == 'uninstall' and removal == 'purge' else 'Резервные копии остаются на ГУ.'))
             # Delete only this run's private upload, before a reset can terminate SSH.
             try:
                 self.cleanup(session, node, stage)
             except Exception as exc:
                 self.log('Файлы установлены/удалены, но временную загрузку очистить не удалось: ' + str(exc))
             stage = None
-            message = 'Установка / обновление завершены.' if action == 'install' else 'NBT-AAD удалён.'
+            message = ('Установка / обновление завершены.' if action == 'install' else
+                       'NBT-AAD удалён. ' + ('Настройки сохранены на ГУ.' if removal == 'keep' else
+                       'Настройки, резервные копии и временные файлы удалены.'))
             if reboot:
                 message += '\n' + restart(session, node, files_processed=True)
             else:
@@ -156,8 +170,12 @@ class Installer:
             return message
         finally:
             if stage and not completed:
-                self.log('При незавершённой операции временные файлы оставлены в ' + stage +
-                         '. Они сохранены для диагностики; резервные копии не удаляются.')
+                if action == 'uninstall' and removal == 'purge':
+                    self.log('Полная очистка не подтверждена. Часть файлов и копий могла быть уже удалена. '
+                             'Временный путь этой операции: ' + stage + '. Проверьте журнал перед повтором.')
+                else:
+                    self.log('При незавершённой операции временные файлы оставлены в ' + stage +
+                             '. Они сохранены для диагностики; резервные копии не удаляются.')
             session.close()
 
     @staticmethod
