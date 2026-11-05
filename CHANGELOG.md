@@ -1,5 +1,15 @@
 # Changes
 
+## 0.3.2 / Windows app 0.1.2
+
+- Adapt to the confirmed production hu-omap tool inventory; remove awk, cmp, od and rmdir dependencies.
+- Parse credentials and daemon PIDs with shell read/case, retaining strict UID checks and PID deduplication.
+- Validate binary ELF/ZIP headers using bounded dd reads and diff, preserving NUL byte positions. Private RAM reference files are always cleaned up.
+- Compare all staged files with binary-aware diff before stopping the daemon or changing live directories.
+- Treat sync as optional, with an explicit log note when unavailable; do not equate a delay/readback with a forced disk flush.
+- Add a restricted-PATH fixture based on the owner's actual /bin inventory, covering status/dry-run/install/update/uninstall and rollback.
+- Keep the Windows restart request functional when sync is absent.
+
 ## 0.3.1 / Windows app 0.1.1
 
 - Fix startup on actual BMW/MINI QNX images lacking `id` and `printf`.
