@@ -135,3 +135,57 @@ class ReleaseTest(unittest.TestCase):
         for url in ('http://example.com', 'file:///etc/passwd', 'https://user@example.com/a'):
             with self.subTest(url=url), self.assertRaises(r.PackageError):
                 r.fetch(url)
+
+    def two_versions(self):
+        first = r.download_package(self.release, self.cache, downloader=self.download)
+        newer, payloads = release('next', '2026-11-04T10:00:00Z')
+        url = newer['assets'][0]['browser_download_url']
+        payloads[url] += b'next-build'
+        newer['assets'][0].update(size=len(payloads[url]),
+            digest='sha256:' + hashlib.sha256(payloads[url]).hexdigest())
+        second = r.download_package(newer, self.cache, downloader=lambda url, limit: payloads[url])
+        return first, second
+
+    def test_library_keeps_all_versions_and_loads_selected_not_latest(self):
+        first, second = self.two_versions()
+        packages = r.list_local_packages(self.cache)
+        self.assertEqual({p.path for p in packages}, {first.path, second.path})
+        self.assertEqual(r.cached_package(self.cache).path, second.path)
+        self.assertEqual(r.local_package(self.cache, first.path.name).path, first.path)
+        self.assertEqual(r.local_package(self.cache, first.path.name).files()['nbt-aad'].read_bytes(), elf())
+
+    def test_legacy_cache_without_timestamp_or_last_pointer_remains_available(self):
+        first, second = self.two_versions()
+        manifest = first.metadata.copy(); manifest.pop('downloaded_at', None)
+        (first.path / 'package.json').write_text(json.dumps(manifest))
+        (self.cache / 'last.json').unlink()
+        self.assertEqual(len(r.list_local_packages(self.cache)), 2)
+        self.assertEqual(r.local_package(self.cache, first.path.name).label, first.label)
+
+    def test_library_skips_broken_and_partial_download_without_deleting_anything(self):
+        first, second = self.two_versions()
+        first.files()['nbt-aad'].write_bytes(b'corruption')
+        (self.cache / 'download-incomplete').mkdir()
+        errors = []
+        packages = r.list_local_packages(self.cache, errors.append)
+        self.assertEqual([p.path for p in packages], [second.path])
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(first.path.exists())
+        with self.assertRaises(r.PackageError):
+            r.local_package(self.cache, first.path.name)
+
+    def test_repeated_download_does_not_duplicate_same_build(self):
+        first = r.download_package(self.release, self.cache, downloader=self.download)
+        second = r.download_package(self.release, self.cache, downloader=self.download)
+        self.assertEqual(first.path, second.path)
+        self.assertEqual(len(r.list_local_packages(self.cache)), 1)
+
+    def test_local_selection_rejects_traversal_and_bad_metadata(self):
+        for identifier in (None, '../outside', 'a' * 23, 'g' * 24):
+            with self.subTest(identifier=identifier), self.assertRaises(r.PackageError):
+                r.local_package(self.cache, identifier)
+        package = r.download_package(self.release, self.cache, downloader=self.download)
+        for malformed in ([], {'release': {}}, {'release': {'tag_name': 42}},
+                          {'release': {'tag_name': 'ok'}, 'files': []}):
+            (package.path / 'package.json').write_text(json.dumps(malformed))
+            self.assertEqual(r.list_local_packages(self.cache), [])
