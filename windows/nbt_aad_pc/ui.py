@@ -46,6 +46,7 @@ class App:
             pass
         self.config = config if isinstance(config, dict) else {}
         config = self.config
+        self.preferred_local = config.get('offline_package')
         root.title('NBT-AAD PC — BMW / MINI')
         height = min(820, root.winfo_screenheight() - 80)
         root.geometry('1000x' + str(height))
@@ -243,10 +244,13 @@ class App:
         return None
 
     def save_preferences(self):
+        selected = self.selected_local_identifier()
+        if selected:
+            self.preferred_local = selected
         config = {'host': self.config.get('host', '169.254.199.99'),
                   'port': self.config.get('port', 22),
                   'offline': self.offline.get(),
-                  'offline_package': self.selected_local_identifier()}
+                  'offline_package': self.preferred_local}
         (self.state / 'settings.json').write_text(json.dumps(config), encoding='utf-8')
 
     def offline_changed(self):
@@ -315,7 +319,7 @@ class App:
         self.start('Проверка релизов GitHub…', work)
 
     def update_cache_label(self, preferred=None):
-        preferred = preferred or self.selected_local_identifier()
+        preferred = preferred or self.selected_local_identifier() or self.preferred_local
         self.local_packages = list_local_packages(self.state / 'packages', self.log)
         labels = []
         for package in self.local_packages:
@@ -339,6 +343,7 @@ class App:
                     fallback = None
                 selected = preferred or fallback
                 self.local_release.current(identifiers.index(selected) if selected in identifiers else 0)
+                self.preferred_local = self.selected_local_identifier()
         else:
             self.local_release.set('Нет сохранённых комплектов — скачайте заранее')
         try:
