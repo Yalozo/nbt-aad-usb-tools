@@ -1,0 +1,40 @@
+name: Application screenshots
+on:
+  push:
+    paths:
+      - 'tools/capture_screenshots.py'
+      - '.github/workflows/screenshots.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  screenshots:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Capture actual application windows
+        run: |
+          python -m pip install -r windows/requirements.txt pillow==13.0.0
+          python tools/capture_screenshots.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NBT-AAD-PC-screenshots
+          path: docs/screenshots/*
+          if-no-files-found: error
+      - name: Publish screenshots for documentation
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/screenshots/installer-main.png docs/screenshots/installer-offline.png docs/screenshots/capture.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update actual application screenshots for documentation'
+            git push
+          fi
