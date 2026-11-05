@@ -29,14 +29,22 @@ def remote_path(node, local):
 
 
 def detect(session):
-    output = session.run('uname -s; uname -n; id -u', stream=False).decode().splitlines()
-    if len(output) != 3 or output[0] != 'QNX' or output[2] != '0':
-        raise RemoteError('Ожидалось root-подключение к QNX на NBT Evo.')
+    output = session.run('uname -s; uname -n', stream=False).decode().splitlines()
+    if len(output) != 2 or output[0] != 'QNX':
+        raise RemoteError('Ожидалось подключение к QNX на NBT Evo.')
     node = output[1].split('.')[0]
     if node not in ('hu-omap', 'hu-jacinto'):
         raise RemoteError('Неизвестный узел QNX: ' + output[1])
     base = remote_path(node, '')
     session.run('test -d ' + shlex.quote(base + '/fs/sda0/opt/hmi/ID5'), stream=False)
+    credentials = session.run(on_omap(node, 'echo NBT_AAD_SHELL_PID=$$; pidin -p $$ -F "%a %W"'),
+                              stream=False).decode().splitlines()
+    marker = re.fullmatch(r'NBT_AAD_SHELL_PID=([0-9]+)', credentials[0]) if credentials else None
+    if not marker:
+        raise RemoteError('Не удалось определить PID проверяемой оболочки ГУ.')
+    rows = [line.split() for line in credentials[1:] if line.split() and line.split()[0] == marker[1]]
+    if not rows or any(len(row) != 2 or row[1] != '0' for row in rows):
+        raise RemoteError('Root-доступ на hu-omap не подтверждён: эффективный UID должен быть 0.')
     return node
 
 
@@ -50,7 +58,7 @@ def restart(session, node):
     # Commit is already acknowledged and verified. The reset can close SSH,
     # so distinguish a requested reset from a confirmed boot of the head unit.
     command = on_omap(node, 'command -v OnOffDSICommander >/dev/null && '
-                      'sync && printf "NBT_AAD_RESTART_REQUESTED\\n" && OnOffDSICommander appreset')
+                      'sync && echo NBT_AAD_RESTART_REQUESTED && OnOffDSICommander appreset')
     seen = []
     original_log = session.log
     def collect(line):
