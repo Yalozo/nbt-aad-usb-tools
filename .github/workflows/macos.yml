@@ -20,6 +20,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   macos:
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
