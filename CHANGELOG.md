@@ -5,6 +5,7 @@
 - Build native macOS .app bundles for Apple Silicon and Intel with the same installer/features as Windows.
 - Store Mac settings and offline packages in ~/Library/Application Support/NBT-AAD-PC; retain Windows storage compatibility.
 - Use Mac fonts and run GUI tests on both desktop platforms.
+- Bundle the public HTTPS CA store so downloading releases does not depend on an external Python installation; verify certificate checking remains enabled.
 - Verify frozen app startup, code signatures, native architecture and minimum macOS deployment targets; preserve bundle symlinks in ZIP downloads.
 - Add macOS build instructions and separate GitHub Actions artifacts, including local-network permission text and first-launch instructions for ad-hoc signed builds.
 
