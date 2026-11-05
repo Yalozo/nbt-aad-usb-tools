@@ -1,8 +1,10 @@
 from pathlib import Path
+import os
+import subprocess
 import tempfile
 import unittest
-from nbt_aad_pc.controller import Connection, Installer, remote_path
-from nbt_aad_pc.ssh import RemoteError
+from nbt_aad_pc.controller import Connection, Installer, remote_path, restart
+from nbt_aad_pc.ssh import RemoteError, RemoteExitError
 
 
 class FakeSession:
@@ -150,3 +152,24 @@ class ControllerTest(unittest.TestCase):
                 self.execute()
             self.assertFalse(self.session.uploads)
             self.assertNotIn('appreset', self.commands())
+
+    @unittest.skipIf(os.name == 'nt', 'Runs the remote POSIX command locally')
+    def test_reset_command_runs_without_sync_utility(self):
+        binary = self.root / 'OnOffDSICommander'
+        marker = self.root / 'reset-requested'
+        binary.write_text('#!/bin/sh\necho "$1" > "' + str(marker) + '"\n')
+        binary.chmod(0o755)
+        class LocalShellSession:
+            def __init__(session):
+                session.log = self.logs.append
+            def run(session, command, **kwargs):
+                result = subprocess.run(['/bin/sh', '-c', command],
+                    env={'PATH': str(self.root)}, capture_output=True, text=True, timeout=5)
+                for line in result.stdout.splitlines():
+                    session.log(line)
+                if result.returncode:
+                    raise RemoteExitError(result.returncode, result.stderr)
+                return result.stdout.encode()
+        message = restart(LocalShellSession(), 'hu-omap')
+        self.assertIn('Перезагрузка ГУ запрошена', message)
+        self.assertEqual(marker.read_text(), 'appreset\n')
