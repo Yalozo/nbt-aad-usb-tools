@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'tools/capture_screenshots.py'
+      - 'windows/nbt_aad_pc/**'
       - '.github/workflows/screenshots.yml'
   workflow_dispatch:
 permissions:
