@@ -6,6 +6,8 @@
 
 ## Приложение для Windows и macOS
 
+**[Скачать готовые приложения для Windows, Mac Intel и Apple Silicon](https://github.com/Yalozo/nbt-aad-usb-tools/releases/latest)**
+
 [**NBT-AAD PC**](windows/README.md) устанавливает, обновляет и удаляет NBT-AAD по SSH через ENET. Есть автоматическая загрузка релиза, проверка SHA-256, библиотека всех скачанных комплектов с выбором офлайн-версии, журнал, отдельная кнопка перезагрузки ГУ, определение установленной версии и два режима удаления: с сохранением настроек или полная очистка. [Сборки Windows](https://github.com/Yalozo/nbt-aad-usb-tools/actions/workflows/windows.yml). SSH открывается отдельно.
 
 Для Mac доступны отдельные `.app`-сборки **Apple Silicon (arm64)** и **Intel (x86_64)** с теми же функциями, без установки Python. [Инструкция macOS](macos/README.md) · [Сборки macOS](https://github.com/Yalozo/nbt-aad-usb-tools/actions/workflows/macos.yml). Данные хранятся в `~/Library/Application Support/NBT-AAD-PC`. Порядок первого запуска сборок без Developer ID/notarization описан в инструкции.
