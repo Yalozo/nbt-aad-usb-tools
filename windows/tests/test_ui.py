@@ -80,3 +80,5 @@ class WindowsUITest(unittest.TestCase):
                 self.assertIsNone(restored.selected_local_identifier())
             finally:
                 restored.close()
+            settings = json.loads((Path(directory) / 'settings.json').read_text())
+            self.assertEqual(settings['offline_package'], first.path.name)
