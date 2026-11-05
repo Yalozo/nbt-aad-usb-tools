@@ -17,6 +17,7 @@ from .releases import (list_releases, download_package, local_package,
 
 
 UPSTREAM = 'https://github.com/Sq00ky/Supra-iDrive6-Android-Auto'
+DRIVE2 = 'https://www.drive2.ru/l/747198416496362487/'
 
 
 def installer_script():
@@ -62,13 +63,13 @@ class App:
         frame.pack(fill='both', expand=True)
         ttk.Label(frame, text='Беспроводной Android Auto', style='Title.TLabel').pack(anchor='w')
         ttk.Label(frame, text='BMW и MINI с NBT Evo · бесплатный установщик ' + __version__).pack(anchor='w', pady=(4, 16))
-        note = ('Подключите ENET и заранее откройте SSH через Bavarian SSH Client.\n'
-                'CarPlay должен быть активирован. Флешка и PuTTY не нужны.')
+        note = ('Подключите ENET. CarPlay должен быть активирован, SSH — открыт.\n'
+                'SSH можно открыть бесплатным Bavarian SSH Client или другими решениями.')
         ttk.Label(frame, text=note, foreground='#526970').pack(anchor='w')
         links = ttk.Frame(frame)
         links.pack(fill='x', pady=(6, 14))
         for title, url in [('Открыть Bavarian SSH Client', 'https://ssh.bavarian-aa.uk/'),
-                           ('Исходный проект NBT-AAD', UPSTREAM)]:
+                           ('Исходный проект NBT-AAD', UPSTREAM), ('Мой бортжурнал на Drive2', DRIVE2)]:
             button = ttk.Label(links, text=title, foreground='#008d91', cursor='hand2')
             button.pack(side='left', padx=(0, 25))
             button.bind('<Button-1>', lambda event, url=url: webbrowser.open(url))
@@ -108,6 +109,8 @@ class App:
         self.widgets.append(self.release)
         self.release_refresh = self.add_button(release_row, 'Проверить релизы', self.refresh)
         self.release_refresh.pack(side='left', padx=(10, 0))
+        self.download_button = self.add_button(release_row, 'Скачать заранее', self.prepare)
+        self.download_button.pack(side='left', padx=(10, 0))
         ttk.Label(frame, text='Сохранённые комплекты — выбор для установки без интернета').pack(anchor='w', pady=(10, 3))
         local_row = ttk.Frame(frame)
         local_row.pack(fill='x')
@@ -115,32 +118,24 @@ class App:
         self.local_release.pack(side='left', fill='x', expand=True)
         self.local_release.bind('<<ComboboxSelected>>', lambda event: self.save_preferences())
         self.widgets.append(self.local_release)
-        self.add_button(local_row, 'Обновить список', self.update_cache_label).pack(side='left', padx=(10, 0))
         self.package_label = tk.StringVar(value='Скачанный комплект: нет')
         ttk.Label(frame, textvariable=self.package_label, foreground='#526970').pack(anchor='w', pady=(8, 13))
-        removal_row = ttk.Frame(frame)
-        removal_row.pack(fill='x', pady=(0, 8))
-        ttk.Label(removal_row, text='Режим удаления:').pack(side='left', padx=(0, 10))
-        self.removal = ttk.Combobox(removal_row, state='readonly', width=65, values=[
-            'Сохранить настройки и резервные копии',
-            'Полная очистка: программа, настройки, журналы и резервные копии'])
-        self.removal.current(0)
-        self.removal.pack(side='left', fill='x', expand=True)
-        self.widgets.append(self.removal)
         actions = ttk.Frame(frame)
         actions.pack(fill='x')
+        self.action_buttons = []
         for title, command, accent in [
+                ('Состояние', lambda: self.operate('status'), False),
                 ('Установить / обновить', lambda: self.operate('install'), True),
                 ('Удалить', lambda: self.operate('uninstall'), False),
-                ('Состояние', lambda: self.operate('status'), False),
-                ('Перезагрузить ГУ', lambda: self.operate('restart'), False),
-                ('Скачать заранее', self.prepare, False)]:
+                ('Очистить ГУ', lambda: self.operate('purge'), False),
+                ('Перезагрузить ГУ', lambda: self.operate('restart'), False)]:
             button = self.add_button(actions, title, command, accent)
             button.pack(side='left', padx=(0, 9))
-            if title == 'Скачать заранее':
-                self.download_button = button
-            elif title == 'Перезагрузить ГУ':
+            self.action_buttons.append(button)
+            if title == 'Перезагрузить ГУ':
                 self.restart_button = button
+            elif title == 'Очистить ГУ':
+                self.purge_button = button
         self.status = tk.StringVar(value='Готово к работе')
         ttk.Label(frame, textvariable=self.status).pack(anchor='w', pady=(16, 5))
         self.progress = ttk.Progressbar(frame, mode='indeterminate')
@@ -222,7 +217,7 @@ class App:
                         self.write('ОШИБКА: ' + data)
                         detail = data.replace(self.secret, '[пароль скрыт]') if self.secret else data
                         messagebox.showerror('Операция не завершена', detail +
-                            '\n\nЕсли SSH закрыт, сначала откройте его через Bavarian SSH Client. Не повторяйте установку при незавершённом откате.', parent=self.root)
+                            '\n\nЕсли SSH закрыт, откройте его бесплатным Bavarian SSH Client или другим решением. Не повторяйте установку при незавершённом откате.', parent=self.root)
                     else:
                         self.status.set('Готово')
                         if data:
@@ -266,7 +261,7 @@ class App:
 
     def update_controls(self):
         for widget in self.widgets:
-            state = 'readonly' if widget in (self.release, self.local_release, self.removal) else 'normal'
+            state = 'readonly' if widget in (self.release, self.local_release) else 'normal'
             widget.configure(state='disabled' if self.busy else state)
         if not self.busy:
             if self.offline.get():
@@ -296,8 +291,8 @@ class App:
         return package
 
     def operate(self, action):
-        removal = 'purge' if self.removal.current() == 1 else 'keep'
-        if action == 'uninstall' and removal == 'purge':
+        removal = 'purge' if action == 'purge' else 'keep'
+        if action == 'purge':
             if not messagebox.askyesno('Полное удаление NBT-AAD',
                 'Будут безвозвратно удалены программа и плагин NBT-AAD, настройки /opt/aa и /var/opt/aa, '
                 'все резервные копии нашего установщика, его временные загрузки и известные файлы NBT-AAD в RAM.\n\n'
@@ -316,7 +311,8 @@ class App:
         def work():
             package = self.get_package(offline, preview, selected, local_identifier) if action == 'install' else None
             installer = Installer(installer_script(), self.state, self.log, self.confirm)
-            return installer.execute(action, connection, package, reboot, removal=removal)
+            return installer.execute('uninstall' if action == 'purge' else action,
+                                     connection, package, reboot, removal=removal)
         self.start('Перезагрузка головного устройства…' if action == 'restart' else 'Работа с головным устройством…', work)
 
     def prepare(self):
