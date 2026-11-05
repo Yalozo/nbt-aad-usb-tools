@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-@unittest.skipUnless(sys.platform == 'win32', 'Native UI smoke test runs on Windows')
-class WindowsUITest(unittest.TestCase):
+@unittest.skipUnless(sys.platform in ('win32', 'darwin'), 'Native UI tests run on Windows/macOS')
+class NativeUITest(unittest.TestCase):
     def test_window_constructs_and_password_is_not_saved(self):
         import tkinter as tk
         from nbt_aad_pc.ui import App
