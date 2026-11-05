@@ -58,7 +58,8 @@ def restart(session, node):
     # Commit is already acknowledged and verified. The reset can close SSH,
     # so distinguish a requested reset from a confirmed boot of the head unit.
     command = on_omap(node, 'command -v OnOffDSICommander >/dev/null && '
-                      'sync && echo NBT_AAD_RESTART_REQUESTED && OnOffDSICommander appreset')
+                      'if command -v sync >/dev/null 2>&1; then sync || exit 1; fi; '
+                      'echo NBT_AAD_RESTART_REQUESTED && OnOffDSICommander appreset')
     seen = []
     original_log = session.log
     def collect(line):
