@@ -54,8 +54,8 @@ def on_omap(node, command):
     return command
 
 
-def restart(session, node):
-    # Commit is already acknowledged and verified. The reset can close SSH,
+def restart(session, node, files_processed=False):
+    # When called after installation, the commit has already been verified.
     # so distinguish a requested reset from a confirmed boot of the head unit.
     command = on_omap(node, 'command -v OnOffDSICommander >/dev/null && '
                       'if command -v sync >/dev/null 2>&1; then sync || exit 1; fi; '
@@ -70,10 +70,14 @@ def restart(session, node):
         session.run(command, timeout=30)
         return 'Перезагрузка ГУ запрошена. Дождитесь появления штатного меню.'
     except RemoteExitError as exc:
+        if not files_processed:
+            raise RemoteError('Команда перезагрузки завершилась ошибкой: ' + str(exc)) from exc
         return 'Файлы обработаны успешно, но команда перезагрузки завершилась ошибкой: ' + str(exc)
     except Exception as exc:
         if 'NBT_AAD_RESTART_REQUESTED' in seen:
             return 'Команда перезагрузки отправлена, SSH закрылся. Дождитесь загрузки ГУ.'
+        if not files_processed:
+            raise RemoteError('Перезагрузку подтвердить не удалось: ' + str(exc)) from exc
         return 'Файлы обработаны успешно, но перезагрузку подтвердить не удалось: ' + str(exc)
     finally:
         session.log = original_log
@@ -85,13 +89,15 @@ class Installer:
         self.log, self.confirm, self.session_factory = log, confirm, session_factory
 
     def execute(self, action, connection, package=None, reboot=True):
-        if action not in ('install', 'uninstall', 'status'):
+        if action not in ('install', 'uninstall', 'status', 'restart'):
             raise ValueError('Неизвестная операция.')
         connection.validate()
-        script = self.script.read_bytes()
-        if b'--source PATH' not in script:
-            raise PackageError('Нужен установщик версии 0.3.0 или новее с поддержкой SSH.')
-        files = {'nbt-aad.sh': script}
+        script, files = b'', {}
+        if action != 'restart':
+            script = self.script.read_bytes()
+            if b'--source PATH' not in script:
+                raise PackageError('Нужен установщик версии 0.3.0 или новее с поддержкой SSH.')
+            files['nbt-aad.sh'] = script
         if action == 'install':
             if package is None:
                 raise PackageError('Не выбран комплект NBT-AAD.')
@@ -106,6 +112,9 @@ class Installer:
         try:
             node = detect(session)
             self.log('Проверка ГУ пройдена: ' + node)
+            if action == 'restart':
+                self.log('Отправка команды перезагрузки ГУ…')
+                return restart(session, node)
             if action == 'status':
                 # No staging or writes to the HU in status mode.
                 command = on_omap(node, '/bin/sh -s -- status')
@@ -141,7 +150,7 @@ class Installer:
             stage = None
             message = 'Установка / обновление завершены.' if action == 'install' else 'NBT-AAD удалён.'
             if reboot:
-                message += '\n' + restart(session, node)
+                message += '\n' + restart(session, node, files_processed=True)
             else:
                 message += '\nПерезагрузка отключена в настройках.'
             return message
