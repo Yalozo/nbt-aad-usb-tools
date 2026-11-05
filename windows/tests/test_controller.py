@@ -18,6 +18,7 @@ class FakeSession:
         self.no_success = False
         self.fail_verify = False
         self.fail_reset = False
+        self.flat_shmem = False
 
     def close(self):
         self.closed = True
@@ -27,6 +28,8 @@ class FakeSession:
 
     def run(self, command, **kwargs):
         self.calls.append((command, kwargs))
+        if self.flat_shmem and 'mkdir' in command and '/dev/shmem/' in command:
+            raise RemoteError('Function not implemented')
         if command == 'uname -s; uname -n':
             return ('QNX\n' + self.node + '\n').encode()
         if 'NBT_AAD_SHELL_PID=' in command:
@@ -86,7 +89,7 @@ class ControllerTest(unittest.TestCase):
     def test_jacinto_uses_qnet_upload_and_omap_reset(self):
         self.session.node = 'hu-jacinto'
         self.execute()
-        self.assertTrue(all(p.startswith('/net/hu-omap/dev/shmem/') for p in self.session.uploads))
+        self.assertTrue(all(p.startswith('/net/hu-omap/var/opt/') for p in self.session.uploads))
         self.assertIn('on -f /net/hu-omap /bin/sh -c', self.commands())
         self.assertEqual(remote_path('hu-omap', '/dev/shmem/a'), '/dev/shmem/a')
 
@@ -120,6 +123,16 @@ class ControllerTest(unittest.TestCase):
         self.execute(reboot=False)
         self.assertNotIn('appreset', self.commands())
 
+    def test_qnx_flat_shmem_upload_uses_real_var_filesystem(self):
+        self.session.node = 'hu-jacinto'
+        self.session.flat_shmem = True
+        self.execute()
+        self.assertTrue(self.session.uploads)
+        self.assertTrue(all(path.startswith('/net/hu-omap/var/opt/nbt-aad-pc-')
+                            for path in self.session.uploads))
+        self.assertNotIn('/dev/shmem/', self.commands())
+        self.assertTrue(self.session.closed)
+
     def test_unknown_node_and_non_ip_are_rejected(self):
         self.session.node = 'unknown'
         with self.assertRaises(RemoteError):
@@ -130,7 +143,7 @@ class ControllerTest(unittest.TestCase):
                 Connection(host=host, password='pw').validate()
 
     def test_cleanup_rejects_arbitrary_paths(self):
-        for path in ('/opt/aa', '/dev/shmem/nbt-aad-pc-../aa', '/dev/shmem/nbt-aad-pc-short'):
+        for path in ('/opt/aa', '/var/opt/nbt-aad-pc-../aa', '/var/opt/nbt-aad-pc-short'):
             with self.subTest(path=path), self.assertRaises(RemoteError):
                 Installer.cleanup(self.session, 'hu-omap', path)
 
