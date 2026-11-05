@@ -2,6 +2,9 @@
 
 ## Windows/macOS app 0.1.6
 
+- Order actions as status, install/update, uninstall preserving settings, full NBT-AAD cleanup and restart. Move pre-download beside online releases; refresh saved packages automatically.
+- Link the author’s Drive2 installation report and clarify SSH can be opened with free Bavarian or other solutions.
+
 - Build native macOS .app bundles for Apple Silicon and Intel with the same installer/features as Windows.
 - Store Mac settings and offline packages in ~/Library/Application Support/NBT-AAD-PC; retain Windows storage compatibility.
 - Use Mac fonts and run GUI tests on both desktop platforms.
