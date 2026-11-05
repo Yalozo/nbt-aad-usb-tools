@@ -7,7 +7,7 @@ LC_ALL=C
 export LC_ALL
 umask 077
 
-VERSION=0.3.3
+VERSION=0.4.0
 REMOTE_NODE=/net/hu-omap
 FS_ROOT=/fs/sda0
 AA=/opt/aa
@@ -18,6 +18,8 @@ VAR_BACKUPS=/var/opt/nbt-aad-usb-tools-backups
 MNT=/mnt
 SOURCE_ROOT=/var/opt
 LOCK=/var/opt/nbt-aad-usb-tools.lock
+RAM=/dev/shmem
+TMP=/tmp
 FILES='libNbtAad.so NbtAad.manifest NbtAad.xml NbtAad_ALL_Texts.zip NbtAad_ALL_Images.zip'
 
 ACTION=
@@ -31,6 +33,7 @@ BACKUP=
 VAR_BACKUP=
 LOCKED=0
 ACTIVE=0
+REMOVE_MODE=archive
 
 say() {
     echo "$*"
@@ -41,16 +44,19 @@ exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
 usage() {
     cat <<'EOF'
-NBT-AAD USB Tools 0.3.3
+NBT-AAD USB Tools 0.4.0
 Usage: sh nbt-aad.sh install|uninstall|status [options]
   --usb /mnt/umass...   Select one USB drive explicitly
   --source PATH        Use a private /var/opt/nbt-aad-pc-<32 hex> SSH upload
   --dry-run            Validate and show the plan without changing anything
   --restart-hmi        Run OnOffDSICommander appreset after successful changes
+  --keep-config        Uninstall, retaining /opt/aa configuration and /var/opt/aa
+  --purge              Uninstall and erase NBT-AAD settings, backups and runtime files
   --help               Show this help
 
 install also updates an existing installation, preserving its settings.
 uninstall moves application files and persistent settings to backups.
+Use --keep-config to leave settings in place, or --purge for irreversible cleanup.
 Default: no automatic restart. Reboot the head unit after install/uninstall.
 From hu-jacinto, execution is automatically forwarded to hu-omap via on -f.
 SSH must already be open. This tool does not unlock SSH or activate CarPlay.
@@ -72,6 +78,9 @@ parse_args() {
             SOURCE=$2; shift ;;
         --dry-run) DRY_RUN=1 ;;
         --restart-hmi) RESTART=1 ;;
+        --keep-config|--purge)
+            [ "$REMOVE_MODE" = archive ] || die 'Choose only one removal mode.'
+            case "$1" in --keep-config) REMOVE_MODE=keep ;; --purge) REMOVE_MODE=purge ;; esac ;;
         --help|-h) usage; exit 0 ;;
         *) die "Unknown argument: $1" ;;
     esac
@@ -82,6 +91,7 @@ parse_args() {
 [ "$#" -gt 0 ] || { usage; exit 1; }
 parse_args "$@"
 [ -n "$ACTION" ] || { usage; exit 1; }
+[ "$REMOVE_MODE" = archive ] || [ "$ACTION" = uninstall ] || die 'Removal flags require uninstall.'
 
 # Only the documented head-unit node is permitted. In particular, this script
 # must not modify a laptop or the other processor in the head unit.
@@ -303,9 +313,35 @@ if ! command -v sync >/dev/null 2>&1; then
 fi
 say "Action: $ACTION; USB: ${USB:-not needed}; plugin source: ${PAYLOAD:-not needed}"
 say "Targets: $AA ; $PLUGIN ; $SETTINGS"
+if [ "$ACTION" = uninstall ]; then say "Removal mode: $REMOVE_MODE"; fi
+# Enumerate only paths belonging to this project. Never traverse general logs,
+# Bluetooth databases or firmware settings. Native HMI caches are shared.
+purge_paths() {
+    for target in "$AA" "$PLUGIN" "$SETTINGS" "$BACKUPS" "$VAR_BACKUPS"; do
+        exists "$target" && echo "$target"
+    done
+    for target in "$RAM"/nbt-aad.log "$RAM"/nbt-aad-app.log \
+        "$RAM"/nbt-aad-state "$RAM"/nbt-aad-pdc "$RAM"/nbt-aad-gear \
+        "$RAM"/nbt-aad-daynight "$RAM"/nbt-aad-lm1280 "$RAM"/nbt-aad-kombi-nav.shown \
+        "$TMP"/nbt-aad.log "$TMP"/nbt-aad-app.log; do
+        exists "$target" && echo "$target"
+    done
+    for target in "$SOURCE_ROOT"/nbt-aad-pc-*; do
+        token=${target#"$SOURCE_ROOT"/nbt-aad-pc-}
+        [ "${#token}" -eq 32 ] || continue
+        case "$token" in *[!a-f0-9]*) continue ;; esac
+        exists "$target" && echo "$target"
+    done
+    return 0
+}
+if [ "$REMOVE_MODE" = purge ]; then
+    say 'Irreversible cleanup plan (including installer backups and uploads):'
+    purge_paths
+    say 'Shared HMI caches/system logs, SSH activation, CarPlay and phone pairing are not changed.'
+fi
 pids=$(daemon_pids) || exit 1
 say "Running daemon PID(s): ${pids:-none} (will receive SIGTERM, no forced kill)."
-if [ "$ACTION" = uninstall ] && ! exists "$AA" && ! exists "$PLUGIN" && ! exists "$SETTINGS"; then
+if [ "$ACTION" = uninstall ] && [ "$REMOVE_MODE" != purge ] && ! exists "$AA" && ! exists "$PLUGIN" && ! exists "$SETTINGS"; then
     say 'Already uninstalled. No changes.'
     exit 0
 fi
@@ -395,6 +431,12 @@ LOG=$BACKUP/operation.log
 say "NBT-AAD USB Tools $VERSION; $ACTION; backup: $BACKUP"
 echo "$ACTION" > "$BACKUP/action"
 
+if [ "$ACTION" = uninstall ] && [ "$REMOVE_MODE" = keep ] && [ -d "$AA" ]; then
+    mkdir "$BACKUP/staged-aa"
+    cp -Rp "$AA/." "$BACKUP/staged-aa/"
+    rm -f "$BACKUP/staged-aa/nbt-aad"
+    say 'Configuration files in /opt/aa and /var/opt/aa will remain in place.'
+fi
 if [ "$ACTION" = install ]; then
     mkdir "$BACKUP/staged-aa" "$BACKUP/staged-plugin"
     if [ -d "$AA" ]; then cp -Rp "$AA/." "$BACKUP/staged-aa/"; fi
@@ -427,7 +469,7 @@ while :; do
     remaining=$((remaining - 1))
 done
 
-if [ "$ACTION" = uninstall ] && exists "$SETTINGS"; then
+if [ "$ACTION" = uninstall ] && [ "$REMOVE_MODE" != keep ] && exists "$SETTINGS"; then
     # /var can be a different filesystem. Keep its backup on that same filesystem
     # so this is a rename, not a copy-and-delete across partitions.
     mkdir -p "$VAR_BACKUPS"
@@ -443,11 +485,32 @@ if [ "$ACTION" = install ]; then
     mv "$BACKUP/staged-aa" "$AA"
     mv "$BACKUP/staged-plugin" "$PLUGIN"
 else
-    if exists "$SETTINGS"; then mv "$SETTINGS" "$VAR_BACKUP/aa"; fi
+    if [ "$REMOVE_MODE" = keep ]; then
+        if exists "$BACKUP/staged-aa"; then mv "$BACKUP/staged-aa" "$AA"; fi
+    else
+        if exists "$SETTINGS"; then mv "$SETTINGS" "$VAR_BACKUP/aa"; fi
+    fi
 fi
 flush_if_available
 echo 'File transaction completed.' > "$BACKUP/COMMITTED"
 ACTIVE=0
+if [ "$REMOVE_MODE" = purge ]; then
+    # Commit the removal first. Once erasure begins, rollback is no longer
+    # possible. Keep diagnostics on stdout/the PC, not in a deleted backup.
+    LOG=
+    say 'Application removal committed. Erasing the listed project files; rollback is no longer available.'
+    purge_list=$(purge_paths) || die 'Cannot enumerate cleanup paths.'
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        say "Erasing: $target"
+        rm -rf "$target" || die "Cleanup incomplete: $target. Retry uninstall --purge."
+        exists "$target" && die "Cleanup incomplete: $target"
+    done <<EOF
+$purge_list
+EOF
+    say 'SUCCESS: uninstall completed. NBT-AAD project files and installer backups/uploads erased.'
+    say 'The loaded HMI plugin is released on reboot; it may recreate RAM state until then.'
+else
 say "SUCCESS: $ACTION completed. Previous files: $BACKUP"
 if [ -n "$VAR_BACKUP" ]; then say "Previous persistent settings: $VAR_BACKUP/aa"; fi
 
@@ -455,6 +518,7 @@ if [ -n "$VAR_BACKUP" ]; then say "Previous persistent settings: $VAR_BACKUP/aa"
 # invalidate a successful transaction. The main log stays with the backup.
 if [ -n "$USB" ]; then
     cp "$LOG" "$USB/nbt-aad-tools-${BACKUP##*/}.log" 2>/dev/null || say 'USB log copy unavailable; use operation.log in the backup.'
+fi
 fi
 if [ "$RESTART" -eq 1 ]; then
     say 'Restarting the head unit with OnOffDSICommander appreset. The SSH connection may close.'
