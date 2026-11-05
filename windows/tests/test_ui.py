@@ -138,3 +138,25 @@ class NativeUITest(unittest.TestCase):
                 self.assertEqual(app.selected_local_identifier(), package.path.name)
             finally:
                 app.close()
+
+    def test_tooltip_opens_on_focus_and_closes_when_operation_starts(self):
+        import tkinter as tk
+        from nbt_aad_pc.ui import App
+        with tempfile.TemporaryDirectory() as directory:
+            root = tk.Tk(); root.withdraw()
+            app = App(root, state=directory)
+            try:
+                tooltip = next(t for t in app.tooltips if t.widget is app.purge_button)
+                tooltip.delay = 0
+                app.purge_button.event_generate('<FocusIn>')
+                root.update()
+                self.assertIsNotNone(tooltip.window)
+                self.assertTrue(tooltip.window.winfo_exists())
+                app.busy = True
+                app.update_controls()
+                self.assertIsNone(tooltip.window)
+                tooltip.schedule()
+                self.assertIsNone(tooltip.pending)
+            finally:
+                app.busy = False
+                app.close()
