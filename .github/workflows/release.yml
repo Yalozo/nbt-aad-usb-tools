@@ -1,0 +1,86 @@
+name: Publish desktop release
+on:
+  workflow_run:
+    workflows: ['Windows application', 'macOS application']
+    types: [completed]
+permissions:
+  actions: read
+  contents: write
+concurrency:
+  group: desktop-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const sha = context.payload.workflow_run.head_sha;
+            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo,
+              {owner, repo, head_sha: sha, per_page: 100});
+            const selected = {};
+            for (const name of ['Windows application', 'macOS application', 'Checks']) {
+              const run = runs.find(r => r.name === name && r.event === 'push' &&
+                r.head_branch === 'main' && r.status === 'completed' && r.conclusion === 'success');
+              if (!run) { core.info('Waiting for successful ' + name + ' at ' + sha); return; }
+              selected[name] = run;
+            }
+            const source = await github.rest.repos.getContent({owner, repo, ref: sha,
+              path: 'windows/nbt_aad_pc/__init__.py'});
+            const match = Buffer.from(source.data.content, 'base64').toString('utf8')
+              .match(/__version__ = '([0-9]+\.[0-9]+\.[0-9]+)'/);
+            if (!match) throw new Error('Cannot read application version');
+            const version = match[1], tag = 'app-v' + version;
+            const artifacts = [];
+            for (const name of ['Windows application', 'macOS application']) {
+              const response = await github.rest.actions.listWorkflowRunArtifacts({owner, repo,
+                run_id: selected[name].id, per_page: 100});
+              artifacts.push(...response.data.artifacts);
+            }
+            const names = ['NBT-AAD-PC-Windows-x64', 'NBT-AAD-PC-macOS-arm64', 'NBT-AAD-PC-macOS-x86_64'];
+            const packages = names.map(name => {
+              const matches = artifacts.filter(a => a.name === name && !a.expired);
+              if (matches.length !== 1) throw new Error('Missing/ambiguous artifact: ' + name);
+              return matches[0];
+            });
+            let release;
+            try { release = (await github.rest.repos.getReleaseByTag({owner, repo, tag})).data; }
+            catch (error) { if (error.status !== 404) throw error; }
+            if (release && release.target_commitish !== sha) {
+              throw new Error('This version was already released from a different commit; bump its version.');
+            }
+            if (release && !release.draft) { core.info('Release already published: ' + release.html_url); return; }
+            if (!release) {
+              release = (await github.rest.repos.createRelease({owner, repo, tag_name: tag,
+                target_commitish: sha, name: 'NBT-AAD PC ' + version + ' — Windows / macOS',
+                draft: true, prerelease: false,
+                body: 'Бесплатный GUI-установщик беспроводного Android Auto для BMW и MINI с NBT Evo.\n\n' +
+                  '- Windows x64, macOS Apple Silicon (arm64) и Intel (x86_64).\n' +
+                  '- Установка/обновление, проверка версии, обычное удаление, полная очистка NBT-AAD и перезагрузка.\n' +
+                  '- Скачивание релизов заранее, выбор сохранённой версии и установка без интернета.\n' +
+                  '- Подробные подсказки к кнопкам.\n\n' +
+                  'SSH можно открыть бесплатным [Bavarian SSH Client](https://ssh.bavarian-aa.uk/) или другими решениями.\n\n' +
+                  '[Windows](https://github.com/' + owner + '/' + repo + '/blob/main/windows/README.md) · ' +
+                  '[macOS](https://github.com/' + owner + '/' + repo + '/blob/main/macos/README.md) · ' +
+                  '[Мой Drive2](https://www.drive2.ru/l/747198416496362487/)\n\n' +
+                  'Распакуйте архив. На macOS также распакуйте вложенный ZIP и перенесите .app в «Программы». ' +
+                  'Сборки Mac имеют ad-hoc подпись без Developer ID/notarization; первый запуск описан в инструкции.\n\n' +
+                  'Исследовательский проект. Использование на свой страх и риск, без гарантий. ' +
+                  'Бинарники NBT-AAD скачиваются из исходного проекта и в приложение не включены.'})).data;
+            }
+            const existing = (await github.rest.repos.listReleaseAssets({owner, repo, release_id: release.id})).data;
+            for (const artifact of packages) {
+              const name = artifact.name + '-v' + version + '.zip';
+              if (existing.some(a => a.name === name)) continue;
+              const response = await github.rest.actions.downloadArtifact({owner, repo,
+                artifact_id: artifact.id, archive_format: 'zip'});
+              const data = Buffer.from(response.data);
+              await github.rest.repos.uploadReleaseAsset({owner, repo, release_id: release.id,
+                name, data, headers: {'content-type': 'application/zip', 'content-length': data.length}});
+            }
+            await github.rest.repos.updateRelease({owner, repo, release_id: release.id,
+              draft: false, make_latest: 'true'});
+            core.info('Published ' + tag);
