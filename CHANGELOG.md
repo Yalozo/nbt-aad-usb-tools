@@ -1,5 +1,14 @@
 # Changes
 
+## 0.3.1 / Windows app 0.1.1
+
+- Fix startup on actual BMW/MINI QNX images lacking `id` and `printf`.
+- Verify the effective UID via native QNX `pidin` (%a/%W), after forwarding to hu-omap. USER/LOGNAME are not accepted as proof of root.
+- Use echo for messages and markers, including the Windows reset request.
+- Guard empty argument lists before expanding "$@" under nounset on the older QNX shell.
+- Read-only status checks require only their own utilities; install dependencies are checked before changing files.
+- Add regressions for missing utilities, zero arguments, UID output parsing and mismatched/non-root process credentials.
+
 ## 0.3.0 / Windows app 0.1.0
 
 - Added a Windows GUI for SSH install/update, uninstall and read-only status.
