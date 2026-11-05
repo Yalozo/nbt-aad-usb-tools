@@ -180,6 +180,13 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(first.path, second.path)
         self.assertEqual(len(r.list_local_packages(self.cache)), 1)
 
+    def test_unnamed_release_uses_tag_and_can_be_listed(self):
+        self.release['name'] = None
+        package = r.download_package(self.release, self.cache, downloader=self.download)
+        self.assertEqual(package.label, 'Installer')
+        self.assertFalse(r.is_preview(package.metadata['release']))
+        self.assertEqual(len(r.list_local_packages(self.cache)), 1)
+
     def test_local_selection_rejects_traversal_and_bad_metadata(self):
         for identifier in (None, '../outside', 'a' * 23, 'g' * 24):
             with self.subTest(identifier=identifier), self.assertRaises(r.PackageError):
