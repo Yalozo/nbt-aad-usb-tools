@@ -19,7 +19,8 @@ if '--self-test' in sys.argv:
         root.withdraw()
         app = App(root, state=directory)
         root.update()
-        assert app.removal.current() == 0
+        assert [button.cget('text') for button in app.action_buttons] == [
+            'Состояние', 'Установить / обновить', 'Удалить', 'Очистить ГУ', 'Перезагрузить ГУ']
         app.close()
 else:
     from nbt_aad_pc.ui import main
