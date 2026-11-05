@@ -7,4 +7,7 @@ import sys
 def state_directory():
     if sys.platform == 'darwin':
         return Path.home() / 'Library' / 'Application Support' / 'NBT-AAD-PC'
-    return Path(os.environ.get('LOCALAPPDATA', Path.home() / '.local' / 'share')) / 'NBT-AAD-PC'
+    local_app_data = os.environ.get('LOCALAPPDATA')
+    if local_app_data:
+        return Path(local_app_data) / 'NBT-AAD-PC'
+    return Path.home() / '.local' / 'share' / 'NBT-AAD-PC'
