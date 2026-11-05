@@ -13,6 +13,7 @@ ctypes.windll.user32.SetProcessDPIAware()
 import tkinter as tk
 from PIL import ImageGrab, ImageStat
 from nbt_aad_pc.ui import App
+from nbt_aad_pc import __version__
 from nbt_aad_pc.releases import list_releases
 
 out = root_dir / 'docs/screenshots'
@@ -64,6 +65,7 @@ with tempfile.TemporaryDirectory(prefix='nbt-aad-screenshots-') as directory:
     capture('installer-offline.png')
     (out / 'capture.json').write_text(json.dumps({
         'application': 'NBT-AAD PC', 'platform': 'Windows',
+        'version': __version__,
         'method': 'Pillow ImageGrab single-window capture of the running Tk app',
         'head_unit_connected': False,
         'packages': [p.metadata['release'] for p in packages],
