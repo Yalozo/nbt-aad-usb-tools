@@ -1,6 +1,6 @@
 """Download matched release assets and verify them before touching the head unit."""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -145,9 +145,18 @@ class Package:
 def load_package(path):
     path = Path(path)
     metadata = json.loads((path / 'package.json').read_text(encoding='utf-8'))
+    if not isinstance(metadata, dict):
+        raise PackageError('Некорректное описание сохранённого комплекта.')
+    release = metadata.get('release')
+    if (not isinstance(release, dict) or not isinstance(release.get('tag_name'), str)
+            or not release['tag_name'] or
+            any(release.get(key) is not None and not isinstance(release[key], str)
+                for key in ('name', 'published_at')) or
+            (metadata.get('downloaded_at') is not None and not isinstance(metadata['downloaded_at'], str))):
+        raise PackageError('В комплекте нет сведений о релизе.')
     package = Package(path, metadata)
     files = package.files()
-    if set(metadata['files']) != set(files):
+    if not isinstance(metadata.get('files'), dict) or set(metadata['files']) != set(files):
         raise PackageError('Сохранённый комплект неполон.')
     for name, file in files.items():
         if file.is_symlink() or file.stat().st_size > MAX_ASSET:
@@ -178,7 +187,8 @@ def download_package(release, cache, log=lambda _: None, downloader=fetch):
         (work / 'nbt-aad').write_bytes(payloads[0])
         for name, data in plugin.items():
             (work / 'release' / name).write_bytes(data)
-        metadata = {'schema': 1, 'release': {k: release.get(k) for k in
+        metadata = {'schema': 1, 'downloaded_at': datetime.now(timezone.utc).isoformat(),
+                    'release': {k: release.get(k) for k in
                     ('id', 'name', 'tag_name', 'published_at', 'html_url', 'prerelease')},
                     'assets': [{k: a[k] for k in ('name', 'digest', 'size')} for a in assets],
                     'files': {file.relative_to(work).as_posix(): hashlib.sha256(file.read_bytes()).hexdigest()
@@ -206,3 +216,35 @@ def cached_package(cache):
     if not re.fullmatch(r'[0-9a-f]{24}', identifier):
         raise PackageError('Некорректный указатель на сохранённый комплект.')
     return load_package(cache / identifier)
+
+
+def local_package(cache, identifier):
+    """Load exactly the selected local build, never consult last.json or the network."""
+    if not isinstance(identifier, str) or not re.fullmatch(r'[0-9a-f]{24}', identifier):
+        raise PackageError('Выберите сохранённый комплект из списка.')
+    path = Path(cache) / identifier
+    if path.is_symlink():
+        raise PackageError('Ссылка вместо сохранённого комплекта недопустима.')
+    return load_package(path)
+
+
+def list_local_packages(cache, on_error=lambda _: None):
+    """Keep all content-addressed builds, including caches from older app versions."""
+    cache = Path(cache)
+    if not cache.exists():
+        return []
+    packages = []
+    try:
+        candidates = list(cache.iterdir())
+    except OSError as exc:
+        on_error('Не удалось прочитать список сохранённых комплектов: ' + str(exc))
+        return []
+    for path in candidates:
+        if not re.fullmatch(r'[0-9a-f]{24}', path.name):
+            continue
+        try:
+            packages.append(local_package(cache, path.name))
+        except (OSError, ValueError, KeyError, TypeError, PackageError) as exc:
+            on_error('Пропущен повреждённый комплект ' + path.name + ': ' + str(exc))
+    return sorted(packages, key=lambda p: (p.metadata.get('downloaded_at') or
+                  p.metadata['release'].get('published_at') or '', p.path.name), reverse=True)
