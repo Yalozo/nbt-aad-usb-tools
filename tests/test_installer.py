@@ -32,6 +32,11 @@ class InstallerTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="nbtaad-test-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        production = SOURCE.read_text()
+        def mapped_constant(name):
+            value = next(line.split('=', 1)[1] for line in production.splitlines()
+                         if line.startswith(name + '='))
+            return self.root / value.lstrip('/')
         self.paths = {
             "REMOTE_NODE": self.root / "net/hu-omap",
             "FS_ROOT": self.root / "fs",
@@ -41,8 +46,10 @@ class InstallerTest(unittest.TestCase):
             "BACKUPS": self.root / "opt/backups",
             "VAR_BACKUPS": self.root / "var/opt/backups",
             "MNT": self.root / "mnt",
-            "SOURCE_ROOT": self.root / "shmem",
-            "LOCK": self.root / "shmem/installer.lock",
+            # Preserve the actual filesystem choice, so moving a production
+            # constant into /dev/shmem cannot silently acquire host semantics.
+            "SOURCE_ROOT": mapped_constant('SOURCE_ROOT'),
+            "LOCK": mapped_constant('LOCK'),
         }
         for path in self.paths.values():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +69,8 @@ class InstallerTest(unittest.TestCase):
         self.bin.mkdir()
         self.calls = self.root / "calls"
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
-                        TEST_CALLS=str(self.calls), TEST_ROOT=str(self.root))
+                        TEST_CALLS=str(self.calls), TEST_ROOT=str(self.root),
+                        TEST_LOCK=str(self.paths['LOCK']))
         self.stub("uname", 'if [ "$1" = -s ]; then echo QNX; else echo "${TEST_NODE:-hu-omap}"; fi')
         self.stub("id", 'echo forbidden-id >> "$TEST_CALLS"; exit 127')
         self.stub("mount", 'echo mount >> "$TEST_CALLS"; exit "${TEST_MOUNT_RC:-0}"')
@@ -454,7 +462,7 @@ class InstallerTest(unittest.TestCase):
 
     def test_restart_occurs_only_after_commit_and_lock_release(self):
         self.stub('OnOffDSICommander',
-                  '[ ! -d "$TEST_ROOT/shmem/installer.lock" ] || exit 91\n'
+                  '[ ! -d "$TEST_LOCK" ] || exit 91\n'
                   'set -- "$TEST_ROOT"/opt/backups/*/COMMITTED\n'
                   '[ "$#" -eq 1 ] && [ -f "$1" ] || exit 92\n'
                   'echo hmi >> "$TEST_CALLS"')
@@ -523,7 +531,7 @@ class InstallerTest(unittest.TestCase):
         before = self.snapshot()
         self.run_script('install', '--dry-run')
         self.assertEqual(before, self.snapshot())
-        self.assertFalse(list(self.paths['SOURCE_ROOT'].glob('nbt-aad-header-check-*')))
+        self.assertFalse(list(self.root.rglob('nbt-aad-header-check-*')))
         self.run_script('install', '--restart-hmi')
         self.run_script('install')
         self.run_script('uninstall', '--restart-hmi')
@@ -561,7 +569,7 @@ class InstallerTest(unittest.TestCase):
                 (self.usb / 'nbt-aad').write_bytes(data)
                 self.run_script('install', ok=False)
                 self.assertFalse(self.calls.exists())
-                self.assertFalse(list(self.paths['SOURCE_ROOT'].glob('nbt-aad-header-check-*')))
+                self.assertFalse(list(self.root.rglob('nbt-aad-header-check-*')))
 
     def test_header_validation_keeps_nul_positions_and_accepts_et_exec(self):
         data = bytearray(elf()); data[16] = 2
@@ -571,6 +579,42 @@ class InstallerTest(unittest.TestCase):
         data[16:20] = b'\x00\x02\x00\x28'
         (self.usb / 'nbt-aad').write_bytes(data)
         self.run_script('install', ok=False)
+
+    def emulate_flat_shmem(self):
+        real_mkdir = shutil.which('mkdir')
+        self.stub('mkdir', 'for argument in "$@"; do\n'
+                  ' case "$argument" in "$TEST_ROOT/dev/shmem"/*)\n'
+                  ' echo "mkdir: Function not implemented" >&2; exit 38 ;; esac\n'
+                  'done\nexec ' + shlex.quote(real_mkdir) + ' "$@"')
+
+    def test_qnx_flat_shmem_usb_dryrun_install_update_uninstall(self):
+        self.emulate_flat_shmem()
+        self.run_script('install', '--dry-run')
+        self.run_script('install', '--restart-hmi')
+        self.run_script('install')
+        self.run_script('uninstall', '--restart-hmi')
+        self.assertFalse(self.paths['AA'].exists())
+        self.assertFalse(self.paths['LOCK'].exists())
+        self.assertFalse(list(self.root.rglob('nbt-aad-header-check-*')))
+
+    def test_qnx_flat_shmem_ssh_dryrun_and_install(self):
+        self.emulate_flat_shmem()
+        stage = self.ssh_payload()
+        self.run_script('install', '--source', str(stage), '--dry-run')
+        self.run_script('install', '--source', str(stage))
+        self.assertTrue((self.backup() / 'COMMITTED').exists())
+        self.assertFalse(self.paths['LOCK'].exists())
+        self.assertFalse(list(self.root.rglob('nbt-aad-header-check-*')))
+
+    def test_unwritable_source_header_checks_fail_before_touching_live_files(self):
+        self.old_install()
+        real_mkdir = shutil.which('mkdir')
+        self.stub('mkdir', 'case "$1" in */nbt-aad-header-check-*) exit 1 ;; esac\n'
+                  'exec ' + shlex.quote(real_mkdir) + ' "$@"')
+        result = self.run_script('install', ok=False)
+        self.assertIn('source. It must be writable', result.stderr)
+        self.assert_old_intact()
+        self.assertFalse(self.calls.exists())
 
 
 if __name__ == "__main__":
