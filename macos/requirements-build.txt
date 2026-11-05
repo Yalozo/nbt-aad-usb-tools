@@ -1,0 +1,2 @@
+-r ../windows/requirements-build.txt
+cryptography==50.0.2
