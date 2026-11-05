@@ -7,7 +7,7 @@ LC_ALL=C
 export LC_ALL
 umask 077
 
-VERSION=0.3.0
+VERSION=0.3.1
 REMOTE_NODE=/net/hu-omap
 FS_ROOT=/fs/sda0
 AA=/opt/aa
@@ -33,15 +33,15 @@ LOCKED=0
 ACTIVE=0
 
 say() {
-    printf '%s\n' "$*"
-    if [ -n "$LOG" ]; then printf '%s\n' "$*" >> "$LOG" 2>/dev/null || :; fi
+    echo "$*"
+    if [ -n "$LOG" ]; then echo "$*" >> "$LOG" 2>/dev/null || :; fi
 }
 die() { say "ERROR: $*" >&2; exit 1; }
 exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
 usage() {
     cat <<'EOF'
-NBT-AAD USB Tools 0.3.0
+NBT-AAD USB Tools 0.3.1
 Usage: sh nbt-aad.sh install|uninstall|status [options]
   --usb /mnt/umass...   Select one USB drive explicitly
   --source PATH        Use a private /dev/shmem/nbt-aad-pc-<32 hex> SSH upload
@@ -78,13 +78,14 @@ parse_args() {
     shift
  done
 }
+# The older QNX shell treats an empty "$@" as unset under set -u.
+[ "$#" -gt 0 ] || { usage; exit 1; }
 parse_args "$@"
 [ -n "$ACTION" ] || { usage; exit 1; }
 
 # Only the documented head-unit node is permitted. In particular, this script
 # must not modify a laptop or the other processor in the head unit.
 [ "$(uname -s)" = QNX ] || die 'Run this script on the QNX head unit, not on the computer.'
-[ "$(id -u)" = 0 ] || die 'Root SSH access is required.'
 case "$(uname -n)" in
     hu-omap|hu-omap.*) ;;
     hu-jacinto|hu-jacinto.*)
@@ -103,9 +104,21 @@ case "$(uname -n)" in
     *) die 'Unexpected QNX node; expected hu-omap or hu-jacinto.' ;;
 esac
 [ -d "$FS_ROOT/opt/hmi/ID5" ] || die 'The expected NBT Evo ID5/ID6 layout was not found.'
-for tool in awk cat chmod cmp cp date grep mkdir mount mv od pidin printf rmdir rm sleep sync; do
+for tool in awk cat pidin; do
     command -v "$tool" >/dev/null 2>&1 || die "Required command is missing: $tool"
 done
+
+# BMW/MINI production images may omit both id and printf. pidin is a native
+# QNX utility: %a is PID and %W is effective UID (QNX 6.5 Utilities Reference).
+# Verify this shell's credentials after the node hop; do not trust USER/LOGNAME.
+credentials=$(pidin -p "$$" -F '%a %W') || die 'Cannot read shell credentials with pidin.'
+echo "$credentials" | awk -v expected="$$" '
+    $1 == expected {
+        found=1
+        if (NF != 2 || $2 !~ /^[0-9]+$/ || $2 != 0) invalid=1
+    }
+    END { exit !(found && !invalid) }
+' || die 'Root SSH access could not be verified with pidin (effective UID must be 0).'
 for target in "$AA" "$AA/nbt-aad" "$PLUGIN" "$SETTINGS" "$BACKUPS" "$VAR_BACKUPS"; do
     [ ! -L "$target" ] || die "Refusing a symbolic-link target: $target"
 done
@@ -117,7 +130,7 @@ daemon_pids() {
     # %a = PID, %A = arguments (QNX 6.5). Match argv[0] exactly, never grep
     # the script name or trust a stale PID in nbt-aad-state.
     listing=$(pidin -F '%a %A') || die 'Cannot read the process list with pidin.'
-    printf '%s\n' "$listing" | awk '
+    echo "$listing" | awk '
         $1 ~ /^[0-9]+$/ && ($2 == "nbt-aad" || $2 ~ /\/nbt-aad$/) {
             if (!seen[$1]++) print $1
         }'
@@ -133,6 +146,10 @@ if [ "$ACTION" = status ]; then
     say "Backups: $BACKUPS ; $VAR_BACKUPS"
     exit 0
 fi
+
+for tool in chmod cmp cp date grep mkdir mount mv od rmdir rm sleep sync; do
+    command -v "$tool" >/dev/null 2>&1 || die "Required command is missing: $tool"
+done
 
 complete_payload() {
     for item in $FILES; do [ -f "$1/$item" ] && [ -s "$1/$item" ] || return 1; done
@@ -156,7 +173,7 @@ find_payload() {
         exit 2
     fi
     [ "$matches" -eq 1 ] || return 1
-    printf '%s\n' "$found"
+    echo "$found"
 }
 
 if [ -n "$SOURCE" ]; then
@@ -208,7 +225,7 @@ check_elf() {
     [ -f "$1" ] && [ -s "$1" ] && [ ! -L "$1" ] || die "Missing/empty/symlink binary: $1"
     bytes=$(od -A n -t u1 -N 52 "$1") || die "Cannot read binary: $1"
     # ELF32, little endian, current ELF version, ARM (e_machine 40).
-    printf '%s\n' "$bytes" | awk '
+    echo "$bytes" | awk '
         { for (i=1; i<=NF; i++) b[++n]=$i }
         END { exit !(n==52 && b[1]==127 && b[2]==69 && b[3]==76 && b[4]==70 &&
                      b[5]==1 && b[6]==1 && b[7]==1 && b[19]==40 && b[20]==0 &&
@@ -260,10 +277,10 @@ rollback() {
         recover_directory "$SETTINGS" "$VAR_BACKUP/aa" '' "$VAR_BACKUP/failed-settings"
     fi
     if [ "$rollback_failed" -eq 0 ]; then
-        printf '%s\n' 'Previous files restored.' > "$BACKUP/ROLLED_BACK" || :
+        echo 'Previous files restored.' > "$BACKUP/ROLLED_BACK" || :
         say 'Previous files restored. The daemon remains stopped; reboot the head unit.'
     else
-        printf '%s\n' 'Manual recovery required.' > "$BACKUP/ROLLBACK_FAILED" || :
+        echo 'Manual recovery required.' > "$BACKUP/ROLLBACK_FAILED" || :
         say "ROLLBACK INCOMPLETE. Keep the backups: $BACKUP ; $VAR_BACKUP"
     fi
     sync || :
@@ -306,7 +323,7 @@ trap 'exit 130' 2
 trap 'exit 143' 15
 mkdir "$LOCK" 2>/dev/null || die "Another run or stale lock exists: $LOCK (see README)."
 LOCKED=1
-printf '%s\n' "$$" > "$LOCK/pid"
+echo "$$" > "$LOCK/pid"
 
 # Match the official install guide on the local hu-omap node.
 mount -o remount rw "$FS_ROOT" || die 'Cannot remount the application filesystem writable.'
@@ -316,7 +333,7 @@ BACKUP=$BACKUPS/$stamp-$$-$ACTION
 mkdir "$BACKUP" || die 'Cannot create a unique backup directory.'
 LOG=$BACKUP/operation.log
 say "NBT-AAD USB Tools $VERSION; $ACTION; backup: $BACKUP"
-printf '%s\n' "$ACTION" > "$BACKUP/action"
+echo "$ACTION" > "$BACKUP/action"
 
 if [ "$ACTION" = install ]; then
     mkdir "$BACKUP/staged-aa" "$BACKUP/staged-plugin"
@@ -356,7 +373,7 @@ if [ "$ACTION" = uninstall ] && exists "$SETTINGS"; then
     mkdir -p "$VAR_BACKUPS"
     VAR_BACKUP=$VAR_BACKUPS/${BACKUP##*/}
     mkdir "$VAR_BACKUP"
-    printf '%s\n' "$VAR_BACKUP" > "$BACKUP/var-backup-path"
+    echo "$VAR_BACKUP" > "$BACKUP/var-backup-path"
 fi
 mkdir -p "${PLUGIN%/*}"
 ACTIVE=1
@@ -369,7 +386,7 @@ else
     if exists "$SETTINGS"; then mv "$SETTINGS" "$VAR_BACKUP/aa"; fi
 fi
 sync
-printf '%s\n' 'File transaction completed.' > "$BACKUP/COMMITTED"
+echo 'File transaction completed.' > "$BACKUP/COMMITTED"
 ACTIVE=0
 say "SUCCESS: $ACTION completed. Previous files: $BACKUP"
 if [ -n "$VAR_BACKUP" ]; then say "Previous persistent settings: $VAR_BACKUP/aa"; fi
