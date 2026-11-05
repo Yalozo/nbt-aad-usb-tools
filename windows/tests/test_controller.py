@@ -10,6 +10,7 @@ class FakeSession:
         self.log = args[-1]
         self.calls, self.uploads, self.closed = [], {}, False
         self.node = 'hu-omap'
+        self.credential_output = b'NBT_AAD_SHELL_PID=42\npid euid\n42 0\n'
         self.fail_dry = False
         self.fail_commit = False
         self.no_success = False
@@ -24,8 +25,10 @@ class FakeSession:
 
     def run(self, command, **kwargs):
         self.calls.append((command, kwargs))
-        if command == 'uname -s; uname -n; id -u':
-            return ('QNX\n' + self.node + '\n0\n').encode()
+        if command == 'uname -s; uname -n':
+            return ('QNX\n' + self.node + '\n').encode()
+        if 'NBT_AAD_SHELL_PID=' in command:
+            return self.credential_output
         if '--dry-run' in command:
             if self.fail_dry:
                 raise RemoteError('dry-run failed')
@@ -128,3 +131,22 @@ class ControllerTest(unittest.TestCase):
         for path in ('/opt/aa', '/dev/shmem/nbt-aad-pc-../aa', '/dev/shmem/nbt-aad-pc-short'):
             with self.subTest(path=path), self.assertRaises(RemoteError):
                 Installer.cleanup(self.session, 'hu-omap', path)
+
+    def test_root_check_uses_pidin_on_omap_without_id_or_printf(self):
+        self.session.node = 'hu-jacinto'
+        self.execute()
+        commands = self.commands()
+        self.assertIn('on -f /net/hu-omap /bin/sh -c', commands)
+        self.assertIn('pidin -p $$ -F', commands)
+        self.assertNotIn('id -u', commands)
+        self.assertNotIn('printf', commands)
+
+    def test_nonroot_empty_or_mismatched_credentials_stop_before_upload(self):
+        for output in (b'NBT_AAD_SHELL_PID=42\n42 1000\n', b'',
+                       b'NBT_AAD_SHELL_PID=42\n43 0\n',
+                       b'NBT_AAD_SHELL_PID=42\n42 0\n42 1000\n'):
+            with self.subTest(output=output), self.assertRaises(RemoteError):
+                self.session.credential_output = output
+                self.execute()
+            self.assertFalse(self.session.uploads)
+            self.assertNotIn('appreset', self.commands())
