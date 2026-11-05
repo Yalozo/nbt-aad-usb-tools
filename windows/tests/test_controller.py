@@ -124,6 +124,22 @@ class ControllerTest(unittest.TestCase):
         self.installer.execute('uninstall', self.connection)
         self.assertEqual(len(self.session.uploads), 1)
         self.assertIn('test ! -e /opt/aa', self.commands())
+        self.assertIn('--keep-config', self.commands())
+        self.assertNotIn('test ! -e /var/opt/aa', self.commands())
+
+    def test_full_removal_is_explicit_and_verifies_backup_absence(self):
+        self.installer.execute('uninstall', self.connection, removal='purge')
+        self.assertEqual(len(self.session.uploads), 1)
+        self.assertIn('--purge --dry-run', self.commands())
+        self.assertIn('test ! -e /opt/nbt-aad-usb-tools-backups', self.commands())
+        self.assertIn('test ! -e /var/opt/nbt-aad-usb-tools-backups', self.commands())
+        self.assertNotIn('--keep-config', self.commands())
+        self.assertTrue(any('Резервные копии удалены' in line for line in self.logs))
+
+    def test_invalid_removal_mode_is_rejected_before_connecting(self):
+        with self.assertRaises(ValueError):
+            self.installer.execute('uninstall', self.connection, removal='other')
+        self.assertFalse(self.session.calls)
 
     def test_restart_can_be_disabled(self):
         self.execute(reboot=False)
