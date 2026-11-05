@@ -21,7 +21,11 @@ class NativeUITest(unittest.TestCase):
             self.assertEqual(app.host.get(), '169.254.199.99')
             self.assertTrue(app.reboot.get())
             self.assertFalse(app.preview.get())
-            self.assertEqual(app.removal.current(), 0)
+            self.assertEqual([button.cget('text') for button in app.action_buttons], [
+                'Состояние', 'Установить / обновить', 'Удалить', 'Очистить ГУ', 'Перезагрузить ГУ'])
+            self.assertEqual(app.download_button.master, app.release.master)
+            self.assertFalse(any(widget.cget('text') == 'Обновить список' for widget in app.widgets
+                                 if 'text' in widget.keys()))
             config = (Path(directory) / 'settings.json').read_text(encoding='utf-8')
             self.assertNotIn('password', config)
             self.assertEqual(json.loads(config)['port'], 22)
@@ -43,18 +47,19 @@ class NativeUITest(unittest.TestCase):
                     self.assertEqual(installer.return_value.execute.call_args.kwargs['removal'], 'keep')
                     question.assert_not_called()
                     installer.reset_mock()
-                    app.removal.current(1)
-                    app.operate('uninstall')
+                    app.purge_button.invoke()
                     installer.assert_not_called()
                     question.assert_called_once()
                     question.return_value = True
-                    app.operate('uninstall')
+                    app.purge_button.invoke()
                     self.assertEqual(installer.return_value.execute.call_args.kwargs['removal'], 'purge')
+                    self.assertEqual(installer.return_value.execute.call_args.args[0], 'uninstall')
                 app.busy = True
                 app.update_controls()
-                self.assertEqual(str(app.removal.cget('state')), 'disabled')
+                self.assertEqual(str(app.purge_button.cget('state')), 'disabled')
                 app.busy = False
             finally:
+                app.busy = False
                 app.close()
 
     def test_offline_library_selection_persists_and_restart_does_not_download(self):
@@ -112,3 +117,24 @@ class NativeUITest(unittest.TestCase):
                 restored.close()
             settings = json.loads((Path(directory) / 'settings.json').read_text())
             self.assertEqual(settings['offline_package'], first.path.name)
+
+    def test_new_download_appears_in_local_library_automatically(self):
+        import tkinter as tk
+        from nbt_aad_pc.ui import App
+        from nbt_aad_pc.releases import download_package
+        from test_releases import release
+        with tempfile.TemporaryDirectory() as directory:
+            root = tk.Tk(); root.withdraw()
+            app = App(root, state=directory)
+            try:
+                self.assertFalse(app.local_packages)
+                metadata, payloads = release('new-download', '2026-11-05T10:00:00Z')
+                package = download_package(metadata, Path(directory) / 'packages',
+                                           downloader=lambda url, limit: payloads[url])
+                app.events.put(('package_downloaded', package.path.name))
+                root.after_cancel(app.poll_after)
+                app.poll()
+                self.assertEqual(len(app.local_packages), 1)
+                self.assertEqual(app.selected_local_identifier(), package.path.name)
+            finally:
+                app.close()
