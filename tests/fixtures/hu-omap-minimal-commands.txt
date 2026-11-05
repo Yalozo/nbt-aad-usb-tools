@@ -1,0 +1,16 @@
+# Subset of utilities confirmed by the owner's hu-omap /bin inventory,
+# 2026-11-05. QNX-only commands are stubbed by the test fixture.
+# id, printf, awk, cmp, od, rmdir and sync were absent.
+cat
+chmod
+cp
+date
+dd
+diff
+grep
+ls
+mkdir
+mv
+rm
+sleep
+wc
