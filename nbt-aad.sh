@@ -7,7 +7,7 @@ LC_ALL=C
 export LC_ALL
 umask 077
 
-VERSION=0.3.2
+VERSION=0.3.3
 REMOTE_NODE=/net/hu-omap
 FS_ROOT=/fs/sda0
 AA=/opt/aa
@@ -16,8 +16,8 @@ SETTINGS=/var/opt/aa
 BACKUPS=/opt/nbt-aad-usb-tools-backups
 VAR_BACKUPS=/var/opt/nbt-aad-usb-tools-backups
 MNT=/mnt
-SOURCE_ROOT=/dev/shmem
-LOCK=/dev/shmem/nbt-aad-usb-tools.lock
+SOURCE_ROOT=/var/opt
+LOCK=/var/opt/nbt-aad-usb-tools.lock
 FILES='libNbtAad.so NbtAad.manifest NbtAad.xml NbtAad_ALL_Texts.zip NbtAad_ALL_Images.zip'
 
 ACTION=
@@ -41,10 +41,10 @@ exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
 usage() {
     cat <<'EOF'
-NBT-AAD USB Tools 0.3.2
+NBT-AAD USB Tools 0.3.3
 Usage: sh nbt-aad.sh install|uninstall|status [options]
   --usb /mnt/umass...   Select one USB drive explicitly
-  --source PATH        Use a private /dev/shmem/nbt-aad-pc-<32 hex> SSH upload
+  --source PATH        Use a private /var/opt/nbt-aad-pc-<32 hex> SSH upload
   --dry-run            Validate and show the plan without changing anything
   --restart-hmi        Run OnOffDSICommander appreset after successful changes
   --help               Show this help
@@ -233,7 +233,8 @@ else
 fi
 
 # QNX production images have dd/diff/wc but may omit od/cmp/awk. Tiny
-# validation files are created only in private RAM and removed on every exit.
+# validation files are created on the selected source filesystem and removed
+# on every exit. QNX /dev/shmem does not support directories.
 # No binary data passes through shell variables: NUL bytes must be preserved.
 emit_bytes() {
     if [ "$BYTE_ECHO" = plain ]; then echo "$1\c"; else echo -e "$1\c"; fi
@@ -268,8 +269,8 @@ validate_payload() (
     else
         die 'This shell cannot emit the binary header reference bytes.'
     fi
-    VALIDATION_DIR=$SOURCE_ROOT/nbt-aad-header-check-$$
-    mkdir "$VALIDATION_DIR" || die 'Cannot create private RAM header checks.'
+    VALIDATION_DIR=$USB/nbt-aad-header-check-$$
+    mkdir "$VALIDATION_DIR" || die 'Cannot create temporary header checks on the selected source. It must be writable.'
     trap 'rm -rf "$VALIDATION_DIR"' 0
     trap 'exit 129' 1
     trap 'exit 130' 2
@@ -309,7 +310,7 @@ if [ "$ACTION" = uninstall ] && ! exists "$AA" && ! exists "$PLUGIN" && ! exists
     exit 0
 fi
 if [ "$DRY_RUN" -eq 1 ]; then
-    say 'DRY RUN: validation passed. No remount, signals, persistent writes, or restart.'
+    say 'DRY RUN: validation passed. No remount, signals, application/configuration writes, or restart.'
     exit 0
 fi
 if [ "$RESTART" -eq 1 ]; then
@@ -358,9 +359,12 @@ restore_directory() {
 }
 release_lock() {
     if [ "$LOCKED" -eq 1 ]; then
-        # This directory was acquired by this run with mkdir and contains only
-        # our PID marker. Minimal NBT Evo images do not provide rmdir.
+        # This directory was acquired atomically under /var/opt. Never create
+        # lock directories under QNX /dev/shmem (no subdirectory support).
         [ -d "$LOCK" ] && [ ! -L "$LOCK" ] || return 1
+        lock_owner=
+        read -r lock_owner < "$LOCK/pid" || return 1
+        [ "$lock_owner" = "$$" ] || return 1
         rm -rf "$LOCK" || return 1
         LOCKED=0
     fi
