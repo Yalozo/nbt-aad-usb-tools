@@ -1,5 +1,15 @@
 # Changes
 
+## Windows app 0.1.4
+
+- Add a standalone head-unit restart button that checks SSH/QNX/root and does not load an installer or package.
+- Show all verified saved packages in an offline selector, including caches created by earlier app versions.
+- Keep all downloaded builds; distinguish reused names/tags and avoid duplicating identical payloads.
+- Install exactly the selected local copy without network access or fallback to another version.
+- Persist offline mode and package selection; disable online controls while offline.
+- Validate chosen files again before installation and skip damaged/incomplete library entries with a log message.
+- Add tests for historical-cache migration, multi-version selection, restart-only execution and native Windows UI behavior.
+
 ## 0.3.3 / Windows app 0.1.3
 
 - Fix QNX ENOSYS from mkdir under /dev/shmem, which has no subdirectory support.
