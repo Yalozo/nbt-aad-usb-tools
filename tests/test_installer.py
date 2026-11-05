@@ -1,7 +1,7 @@
 """Filesystem-level integration tests; no access to a real head unit.
 
 Only absolute path constants in a temporary copy of the production script are
-redirected. QNX-only utilities are simulated; cp/mv/od/cmp/sh are real host tools.
+redirected. QNX-only utilities are simulated; cp/mv/dd/diff/sh are real host tools.
 """
 import os
 from pathlib import Path
@@ -502,6 +502,75 @@ class InstallerTest(unittest.TestCase):
         result = self.run_script('install', ok=False)
         self.assertIn('Root SSH access could not be verified', result.stderr)
         self.assertFalse(self.calls.exists())
+
+    def use_confirmed_minimal_path(self):
+        """No host PATH leakage: only commands present on the real HU."""
+        lean = self.root / 'lean-bin'
+        lean.mkdir()
+        fixture = SOURCE.parent / 'tests/fixtures/hu-omap-minimal-commands.txt'
+        allowed = [line for line in fixture.read_text().splitlines() if line and not line.startswith('#')]
+        for name in allowed:
+            target = shutil.which(name)
+            self.assertIsNotNone(target, name)
+            (lean / name).symlink_to(target)
+        for name in ('uname', 'pidin', 'on', 'mount', 'OnOffDSICommander'):
+            (lean / name).symlink_to(self.bin / name)
+        self.env['PATH'] = str(lean)
+
+    def test_real_hu_toolset_status_dryrun_install_update_uninstall(self):
+        self.use_confirmed_minimal_path()
+        self.run_script('status')
+        before = self.snapshot()
+        self.run_script('install', '--dry-run')
+        self.assertEqual(before, self.snapshot())
+        self.assertFalse(list(self.paths['SOURCE_ROOT'].glob('nbt-aad-header-check-*')))
+        self.run_script('install', '--restart-hmi')
+        self.run_script('install')
+        self.run_script('uninstall', '--restart-hmi')
+        self.assertFalse(self.paths['AA'].exists())
+        self.assertFalse(self.paths['PLUGIN'].exists())
+        calls = self.calls.read_text()
+        self.assertNotIn('sync', calls)
+        self.assertNotIn('forbidden-', calls)
+
+    def test_real_hu_toolset_rolls_back_and_releases_lock(self):
+        self.old_install()
+        self.fail_rename('/staged-plugin', '/NbtAad')
+        self.use_confirmed_minimal_path()
+        # Point mv at the injected failure, still without adding host utilities.
+        (Path(self.env['PATH']) / 'mv').unlink()
+        (Path(self.env['PATH']) / 'mv').symlink_to(self.bin / 'mv')
+        self.run_script('install', ok=False)
+        self.assert_old_intact()
+        self.assertFalse(self.paths['LOCK'].exists())
+
+    def test_binary_copy_corruption_is_detected_before_deployment(self):
+        self.old_install()
+        real_cp = shutil.which('cp')
+        self.stub('cp', shlex.quote(real_cp) + ' "$@" || exit $?\n'
+                  'case "$2" in */staged-aa/nbt-aad) echo corrupted >> "$2" ;; esac')
+        result = self.run_script('install', ok=False)
+        self.assertIn('Daemon copy verification failed', result.stderr)
+        self.assert_old_intact()
+
+    def test_elf_validation_rejects_each_wrong_required_header_field(self):
+        for offset, value in ((0, 0), (4, 2), (5, 2), (6, 0), (16, 1),
+                              (17, 1), (18, 62), (19, 1), (40, 0), (41, 1)):
+            with self.subTest(offset=offset):
+                data = bytearray(elf()); data[offset] = value
+                (self.usb / 'nbt-aad').write_bytes(data)
+                self.run_script('install', ok=False)
+                self.assertFalse(self.calls.exists())
+                self.assertFalse(list(self.paths['SOURCE_ROOT'].glob('nbt-aad-header-check-*')))
+
+    def test_header_validation_keeps_nul_positions_and_accepts_et_exec(self):
+        data = bytearray(elf()); data[16] = 2
+        (self.usb / 'nbt-aad').write_bytes(data)
+        self.run_script('install', '--dry-run')
+        # Moving a NUL must not become equal after shell string conversion.
+        data[16:20] = b'\x00\x02\x00\x28'
+        (self.usb / 'nbt-aad').write_bytes(data)
+        self.run_script('install', ok=False)
 
 
 if __name__ == "__main__":
