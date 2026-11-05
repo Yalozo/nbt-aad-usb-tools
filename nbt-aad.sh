@@ -7,7 +7,7 @@ LC_ALL=C
 export LC_ALL
 umask 077
 
-VERSION=0.3.1
+VERSION=0.3.2
 REMOTE_NODE=/net/hu-omap
 FS_ROOT=/fs/sda0
 AA=/opt/aa
@@ -41,7 +41,7 @@ exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
 usage() {
     cat <<'EOF'
-NBT-AAD USB Tools 0.3.1
+NBT-AAD USB Tools 0.3.2
 Usage: sh nbt-aad.sh install|uninstall|status [options]
   --usb /mnt/umass...   Select one USB drive explicitly
   --source PATH        Use a private /dev/shmem/nbt-aad-pc-<32 hex> SSH upload
@@ -104,7 +104,7 @@ case "$(uname -n)" in
     *) die 'Unexpected QNX node; expected hu-omap or hu-jacinto.' ;;
 esac
 [ -d "$FS_ROOT/opt/hmi/ID5" ] || die 'The expected NBT Evo ID5/ID6 layout was not found.'
-for tool in awk cat pidin; do
+for tool in cat pidin; do
     command -v "$tool" >/dev/null 2>&1 || die "Required command is missing: $tool"
 done
 
@@ -112,13 +112,16 @@ done
 # QNX utility: %a is PID and %W is effective UID (QNX 6.5 Utilities Reference).
 # Verify this shell's credentials after the node hop; do not trust USER/LOGNAME.
 credentials=$(pidin -p "$$" -F '%a %W') || die 'Cannot read shell credentials with pidin.'
-echo "$credentials" | awk -v expected="$$" '
-    $1 == expected {
-        found=1
-        if (NF != 2 || $2 !~ /^[0-9]+$/ || $2 != 0) invalid=1
-    }
-    END { exit !(found && !invalid) }
-' || die 'Root SSH access could not be verified with pidin (effective UID must be 0).'
+root_found=0
+root_invalid=0
+while read -r credential_pid credential_uid credential_extra; do
+    [ "$credential_pid" = "$$" ] || continue
+    root_found=1
+    if [ "$credential_uid" != 0 ] || [ -n "$credential_extra" ]; then root_invalid=1; fi
+done <<EOF
+$credentials
+EOF
+[ "$root_found" -eq 1 ] && [ "$root_invalid" -eq 0 ] || die 'Root SSH access could not be verified with pidin (effective UID must be 0).'
 for target in "$AA" "$AA/nbt-aad" "$PLUGIN" "$SETTINGS" "$BACKUPS" "$VAR_BACKUPS"; do
     [ ! -L "$target" ] || die "Refusing a symbolic-link target: $target"
 done
@@ -130,10 +133,18 @@ daemon_pids() {
     # %a = PID, %A = arguments (QNX 6.5). Match argv[0] exactly, never grep
     # the script name or trust a stale PID in nbt-aad-state.
     listing=$(pidin -F '%a %A') || die 'Cannot read the process list with pidin.'
-    echo "$listing" | awk '
-        $1 ~ /^[0-9]+$/ && ($2 == "nbt-aad" || $2 ~ /\/nbt-aad$/) {
-            if (!seen[$1]++) print $1
-        }'
+    seen_pids=' '
+    while read -r process_pid process_name process_arguments; do
+        case "$process_pid" in ''|0|*[!0-9]*) continue ;; esac
+        case "$process_name" in
+            nbt-aad|*/nbt-aad)
+                case "$seen_pids" in *" $process_pid "*) continue ;; esac
+                echo "$process_pid"
+                seen_pids="$seen_pids$process_pid " ;;
+        esac
+    done <<EOF
+$listing
+EOF
 }
 
 if [ "$ACTION" = status ]; then
@@ -147,7 +158,7 @@ if [ "$ACTION" = status ]; then
     exit 0
 fi
 
-for tool in chmod cmp cp date grep mkdir mount mv od rmdir rm sleep sync; do
+for tool in chmod cp date mkdir mount mv rm sleep; do
     command -v "$tool" >/dev/null 2>&1 || die "Required command is missing: $tool"
 done
 
@@ -221,23 +232,48 @@ else
     fi
 fi
 
+# QNX production images have dd/diff/wc but may omit od/cmp/awk. Tiny
+# validation files are created only in private RAM and removed on every exit.
+# No binary data passes through shell variables: NUL bytes must be preserved.
+emit_bytes() {
+    if [ "$BYTE_ECHO" = plain ]; then echo "$1\c"; else echo -e "$1\c"; fi
+}
+compare_chunk() {
+    dd if="$1" of="$VALIDATION_DIR/actual" bs=1 skip="$2" count="$3" 2>/dev/null || return 1
+    emit_bytes "$4" > "$VALIDATION_DIR/expected" || return 1
+    diff "$VALIDATION_DIR/expected" "$VALIDATION_DIR/actual" >/dev/null 2>&1
+}
 check_elf() {
     [ -f "$1" ] && [ -s "$1" ] && [ ! -L "$1" ] || die "Missing/empty/symlink binary: $1"
-    bytes=$(od -A n -t u1 -N 52 "$1") || die "Cannot read binary: $1"
-    # ELF32, little endian, current ELF version, ARM (e_machine 40).
-    echo "$bytes" | awk '
-        { for (i=1; i<=NF; i++) b[++n]=$i }
-        END { exit !(n==52 && b[1]==127 && b[2]==69 && b[3]==76 && b[4]==70 &&
-                     b[5]==1 && b[6]==1 && b[7]==1 && b[19]==40 && b[20]==0 &&
-                     (b[17]==2 || b[17]==3) && b[18]==0 && b[41]==52 && b[42]==0) }' || die "Not an ARM-compatible ELF32 binary: $1"
+    elf_file=$1
+    elf_size=$(wc -c < "$elf_file") || die "Cannot read binary size: $elf_file"
+    set -- $elf_size
+    [ "$#" -eq 1 ] || die "Cannot parse binary size: $elf_file"
+    case "$1" in ''|*[!0-9]*) die "Invalid binary size: $elf_file" ;; esac
+    [ "$1" -ge 52 ] || die "Truncated ELF header: $elf_file"
+    compare_chunk "$elf_file" 0 7 '\0177ELF\0001\0001\0001' || die "Not a little-endian ELF32 binary: $elf_file"
+    if ! compare_chunk "$elf_file" 16 4 '\0002\0000\0050\0000'; then
+        compare_chunk "$elf_file" 16 4 '\0003\0000\0050\0000' || die "Not an ARM executable/shared library: $elf_file"
+    fi
+    compare_chunk "$elf_file" 40 2 '\0064\0000' || die "Invalid ELF header size: $elf_file"
 }
 check_zip() {
-    bytes=$(od -A n -t u1 -N 4 "$1") || die "Cannot read ZIP: $1"
-    set -- $bytes
-    [ "$#" -eq 4 ] && [ "$1 $2 $3 $4" = '80 75 3 4' ] || die 'Invalid resource ZIP signature.'
+    compare_chunk "$1" 0 4 '\0120\0113\0003\0004' || die "Invalid resource ZIP signature: $1"
 }
-
-if [ "$ACTION" = install ]; then
+validate_payload() (
+    if [ "$(echo '\0101\c')" = A ]; then
+        BYTE_ECHO=plain
+    elif [ "$(echo -e '\0101\c')" = A ]; then
+        BYTE_ECHO=escapes
+    else
+        die 'This shell cannot emit the binary header reference bytes.'
+    fi
+    VALIDATION_DIR=$SOURCE_ROOT/nbt-aad-header-check-$$
+    mkdir "$VALIDATION_DIR" || die 'Cannot create private RAM header checks.'
+    trap 'rm -rf "$VALIDATION_DIR"' 0
+    trap 'exit 129' 1
+    trap 'exit 130' 2
+    trap 'exit 143' 15
     check_elf "$USB/nbt-aad"
     check_elf "$PAYLOAD/libNbtAad.so"
     for item in $FILES; do
@@ -245,8 +281,25 @@ if [ "$ACTION" = install ]; then
     done
     check_zip "$PAYLOAD/NbtAad_ALL_Texts.zip"
     check_zip "$PAYLOAD/NbtAad_ALL_Images.zip"
+)
+
+if [ "$ACTION" = install ]; then
+    for tool in dd diff wc; do
+        command -v "$tool" >/dev/null 2>&1 || die "Required command is missing: $tool"
+    done
+    validate_payload
 fi
 
+# sync is absent on confirmed stock NBT Evo images. When provided, failures
+# still abort the transaction. Without it, follow the upstream copy-and-reset
+# procedure; do not claim a sleep or readback is an equivalent disk flush.
+flush_if_available() {
+    if command -v sync >/dev/null 2>&1; then sync; fi
+}
+
+if ! command -v sync >/dev/null 2>&1; then
+    say 'Note: sync is not installed; no explicit filesystem flush will be requested.'
+fi
 say "Action: $ACTION; USB: ${USB:-not needed}; plugin source: ${PAYLOAD:-not needed}"
 say "Targets: $AA ; $PLUGIN ; $SETTINGS"
 pids=$(daemon_pids) || exit 1
@@ -256,7 +309,7 @@ if [ "$ACTION" = uninstall ] && ! exists "$AA" && ! exists "$PLUGIN" && ! exists
     exit 0
 fi
 if [ "$DRY_RUN" -eq 1 ]; then
-    say 'DRY RUN: validation passed. No remount, signals, writes, or restart.'
+    say 'DRY RUN: validation passed. No remount, signals, persistent writes, or restart.'
     exit 0
 fi
 if [ "$RESTART" -eq 1 ]; then
@@ -283,7 +336,7 @@ rollback() {
         echo 'Manual recovery required.' > "$BACKUP/ROLLBACK_FAILED" || :
         say "ROLLBACK INCOMPLETE. Keep the backups: $BACKUP ; $VAR_BACKUP"
     fi
-    sync || :
+    flush_if_available || :
 }
 recover_directory() {
     if exists "$2"; then
@@ -305,7 +358,10 @@ restore_directory() {
 }
 release_lock() {
     if [ "$LOCKED" -eq 1 ]; then
-        rm -f "$LOCK/pid" && rmdir "$LOCK" || return 1
+        # This directory was acquired by this run with mkdir and contains only
+        # our PID marker. Minimal NBT Evo images do not provide rmdir.
+        [ -d "$LOCK" ] && [ ! -L "$LOCK" ] || return 1
+        rm -rf "$LOCK" || return 1
         LOCKED=0
     fi
 }
@@ -342,11 +398,11 @@ if [ "$ACTION" = install ]; then
     [ ! -L "$BACKUP/staged-aa/nbt-aad" ] || die 'The existing daemon is a symbolic link.'
     cp "$USB/nbt-aad" "$BACKUP/staged-aa/nbt-aad"
     chmod 755 "$BACKUP/staged-aa" "$BACKUP/staged-aa/nbt-aad" "$BACKUP/staged-plugin"
-    cmp -s "$USB/nbt-aad" "$BACKUP/staged-aa/nbt-aad" || die 'Daemon copy verification failed.'
+    diff "$USB/nbt-aad" "$BACKUP/staged-aa/nbt-aad" >/dev/null 2>&1 || die 'Daemon copy verification failed.'
     for item in $FILES; do
         cp "$PAYLOAD/$item" "$BACKUP/staged-plugin/$item"
         chmod 644 "$BACKUP/staged-plugin/$item"
-        cmp -s "$PAYLOAD/$item" "$BACKUP/staged-plugin/$item" || die "Copy verification failed: $item"
+        diff "$PAYLOAD/$item" "$BACKUP/staged-plugin/$item" >/dev/null 2>&1 || die "Copy verification failed: $item"
     done
     say 'Six release files staged and compared with the source originals.'
 fi
@@ -385,7 +441,7 @@ if [ "$ACTION" = install ]; then
 else
     if exists "$SETTINGS"; then mv "$SETTINGS" "$VAR_BACKUP/aa"; fi
 fi
-sync
+flush_if_available
 echo 'File transaction completed.' > "$BACKUP/COMMITTED"
 ACTIVE=0
 say "SUCCESS: $ACTION completed. Previous files: $BACKUP"
@@ -404,7 +460,7 @@ if [ "$RESTART" -eq 1 ]; then
         say 'Files installed/removed, but cannot release the lock. HMI restart skipped.'
         exit 3
     fi
-    sync || { say 'Final sync failed. HMI restart skipped; reboot manually after inspection.'; exit 3; }
+    flush_if_available || { say 'Final sync failed. HMI restart skipped; reboot manually after inspection.'; exit 3; }
     OnOffDSICommander appreset || { say 'Files installed/removed, but HMI restart failed. Reboot manually.'; exit 3; }
 else
     say 'Reboot the head unit after successful changes.'
