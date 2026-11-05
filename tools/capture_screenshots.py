@@ -25,8 +25,12 @@ get_ancestor.restype = wintypes.HWND
 with tempfile.TemporaryDirectory(prefix='nbt-aad-screenshots-') as directory:
     root = tk.Tk()
     app = App(root, state=directory)
-    root.maxsize(1800, 1400)
-    root.geometry('1120x860+0+0')
+    # Keep the complete window inside the runner's actual desktop. PrintWindow
+    # can return white/clipped regions when a window extends beyond that desktop.
+    width = min(1120, root.winfo_screenwidth() - 24)
+    height = min(860, root.winfo_screenheight() - 64)
+    root.minsize(840, min(710, height))
+    root.geometry(str(width) + 'x' + str(height) + '+0+0')
     root.update()
     # Obtain real release metadata and download verified packages. No fabricated
     # version list, status response, connection result or install log is shown.
@@ -58,8 +62,8 @@ with tempfile.TemporaryDirectory(prefix='nbt-aad-screenshots-') as directory:
     capture('installer-main.png')
     app.offline.set(True)
     app.offline_changed()
-    # Choose the second verified build to show explicit offline version selection.
-    app.local_release.current(len(app.local_packages) - 1)
+    # Select a real verified cached build; no online fetch occurs in this mode.
+    app.local_release.current(0)
     app.save_preferences()
     app.update_cache_label()
     capture('installer-offline.png')
