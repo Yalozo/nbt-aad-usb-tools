@@ -1,7 +1,6 @@
 from datetime import datetime
 from collections import Counter
 import json
-import os
 from pathlib import Path
 import queue
 import sys
@@ -12,15 +11,12 @@ from tkinter.scrolledtext import ScrolledText
 import webbrowser
 from . import __version__
 from .controller import Connection, Installer
+from .paths import state_directory
 from .releases import (list_releases, download_package, local_package,
                        list_local_packages, is_preview, PackageError)
 
 
 UPSTREAM = 'https://github.com/Sq00ky/Supra-iDrive6-Android-Auto'
-
-
-def state_directory():
-    return Path(os.environ.get('LOCALAPPDATA', Path.home() / '.local' / 'share')) / 'NBT-AAD-PC'
 
 
 def installer_script():
@@ -52,13 +48,15 @@ class App:
         root.geometry('1000x' + str(height))
         root.minsize(840, min(710, height))
         root.configure(bg='#f3f6f7')
+        font_family = 'Helvetica Neue' if sys.platform == 'darwin' else 'Segoe UI'
+        mono_family = 'Menlo' if sys.platform == 'darwin' else 'Consolas'
         style = ttk.Style(root)
         if 'clam' in style.theme_names():
             style.theme_use('clam')
         style.configure('TFrame', background='#f3f6f7')
-        style.configure('TLabel', background='#f3f6f7', font=('Segoe UI', 10))
-        style.configure('TButton', font=('Segoe UI', 10), padding=(12, 10))
-        style.configure('Title.TLabel', font=('Segoe UI', 23, 'bold'), foreground='#142d34')
+        style.configure('TLabel', background='#f3f6f7', font=(font_family, 10))
+        style.configure('TButton', font=(font_family, 10), padding=(12, 10))
+        style.configure('Title.TLabel', font=(font_family, 23, 'bold'), foreground='#142d34')
         style.configure('Accent.TButton', background='#008d91', foreground='white')
         frame = ttk.Frame(root, padding=26)
         frame.pack(fill='both', expand=True)
@@ -147,7 +145,7 @@ class App:
         ttk.Label(frame, textvariable=self.status).pack(anchor='w', pady=(16, 5))
         self.progress = ttk.Progressbar(frame, mode='indeterminate')
         self.progress.pack(fill='x', pady=(0, 10))
-        self.output = ScrolledText(frame, height=12, font=('Consolas', 9),
+        self.output = ScrolledText(frame, height=12, font=(mono_family, 9),
                                   bg='#142d34', fg='#edf8f8', state='disabled', relief='flat')
         self.output.pack(fill='both', expand=True)
         ttk.Label(frame, text='Журнал: ' + str(self.logfile), foreground='#526970', wraplength=850).pack(anchor='w', pady=(8, 0))
