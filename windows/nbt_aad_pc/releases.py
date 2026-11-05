@@ -45,7 +45,7 @@ def fetch(url, limit=MAX_ASSET):
 def is_preview(release):
     return bool(release.get('prerelease') or
                 re.search(r'(?i)(alpha|beta|preview|(?:^|[-_.])rc\d*)',
-                          release.get('tag_name', '') + ' ' + release.get('name', '')))
+                          (release.get('tag_name') or '') + ' ' + (release.get('name') or '')))
 
 
 def select_assets(release):
