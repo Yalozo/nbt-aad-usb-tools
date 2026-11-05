@@ -1,0 +1,51 @@
+name: macOS application
+on:
+  push:
+    paths:
+      - 'windows/**'
+      - 'macos/**'
+      - 'nbt-aad.sh'
+      - '.github/workflows/macos.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - 'macos/**'
+      - 'nbt-aad.sh'
+      - '.github/workflows/macos.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify native build architecture
+        run: |
+          test "$(uname -m)" = '${{ matrix.arch }}'
+          python -c "import platform; assert platform.machine() == '${{ matrix.arch }}'"
+      - name: Build and test macOS application
+        env:
+          PYTHON_BIN: python
+          MACOSX_DEPLOYMENT_TARGET: '13.0'
+        run: bash macos/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NBT-AAD-PC-macOS-${{ matrix.arch }}
+          path: macos/package/*
+          if-no-files-found: error
+          retention-days: 90
