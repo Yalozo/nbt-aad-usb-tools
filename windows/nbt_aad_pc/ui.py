@@ -12,12 +12,35 @@ import webbrowser
 from . import __version__
 from .controller import Connection, Installer
 from .paths import state_directory
+from .tooltips import Tooltip
 from .releases import (list_releases, download_package, local_package,
                        list_local_packages, is_preview, PackageError)
 
 
 UPSTREAM = 'https://github.com/Sq00ky/Supra-iDrive6-Android-Auto'
 DRIVE2 = 'https://www.drive2.ru/l/747198416496362487/'
+BUTTON_HELP = {
+    'Состояние': 'Проверяет установленные версии программы и плагина, файлы и запущенный процесс. '
+        'Ничего не меняет на ГУ. Интернет не требуется.',
+    'Установить / обновить': 'Устанавливает выбранный релиз или обновляет имеющийся Android Auto. '
+        'Настройки сохраняются, прежние файлы помещаются в резервную копию. '
+        'В офлайн-режиме используется выбранный сохранённый комплект.',
+    'Удалить': 'Обычное удаление Android Auto и пункта меню. Настройки подключения, nbt-aad.env '
+        'и резервные копии остаются на ГУ. При повторной установке настройки используются снова. '
+        'Интернет и скачанный комплект не нужны.',
+    'Очистить ГУ': 'Полностью удаляет NBT-AAD: программу, плагин, настройки, резервные копии '
+        'нашего установщика, его временные загрузки и известные журналы/файлы состояния. '
+        'Восстановление из этих копий станет невозможно. Требуется подтверждение. '
+        'Это не заводской сброс: SSH, CarPlay и сопряжения Bluetooth сохраняются.',
+    'Перезагрузить ГУ': 'Отправляет отдельную команду перезагрузки ГУ через SSH. '
+        'Не устанавливает и не удаляет Android Auto. Не зависит от флажка перезагрузки после установки. '
+        'Дождитесь загрузки штатного меню.',
+    'Скачать заранее': 'Скачивает выбранный интернет-релиз на компьютер и проверяет его файлы. '
+        'Подключение к автомобилю не требуется. Комплект добавляется в локальный список автоматически '
+        'и остаётся доступен для установки без интернета.',
+    'Проверить релизы': 'Получает список доступных релизов NBT-AAD из GitHub. '
+        'Нужен интернет. Головное устройство не изменяется.',
+}
 
 
 def installer_script():
@@ -34,6 +57,7 @@ class App:
         self.logfile = self.state / 'logs' / (datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '.log')
         self.events, self.busy = queue.Queue(), False
         self.releases, self.local_packages, self.widgets = [], [], []
+        self.tooltips = []
         self.secret = ''
         self.log_handle = self.logfile.open('a', encoding='utf-8', buffering=1)
         config = {}
@@ -153,6 +177,8 @@ class App:
     def add_button(self, parent, text, command, accent=False):
         button = ttk.Button(parent, text=text, command=command, style='Accent.TButton' if accent else 'TButton')
         self.widgets.append(button)
+        if text in BUTTON_HELP:
+            self.tooltips.append(Tooltip(button, BUTTON_HELP[text]))
         return button
 
     def write(self, message):
@@ -261,6 +287,8 @@ class App:
         self.save_preferences()
 
     def update_controls(self):
+        for tooltip in self.tooltips:
+            tooltip.hide()
         for widget in self.widgets:
             state = 'readonly' if widget in (self.release, self.local_release) else 'normal'
             widget.configure(state='disabled' if self.busy else state)
@@ -373,6 +401,8 @@ class App:
             messagebox.showinfo('Операция выполняется', 'Дождитесь завершения операции перед закрытием программы.', parent=self.root)
             return
         self.save_preferences()
+        for tooltip in self.tooltips:
+            tooltip.hide()
         self.root.after_cancel(self.poll_after)
         self.log_handle.close()
         self.root.destroy()
