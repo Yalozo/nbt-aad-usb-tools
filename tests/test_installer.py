@@ -64,7 +64,7 @@ class InstallerTest(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                         TEST_CALLS=str(self.calls), TEST_ROOT=str(self.root))
         self.stub("uname", 'if [ "$1" = -s ]; then echo QNX; else echo "${TEST_NODE:-hu-omap}"; fi')
-        self.stub("id", "echo 0")
+        self.stub("id", 'echo forbidden-id >> "$TEST_CALLS"; exit 127')
         self.stub("mount", 'echo mount >> "$TEST_CALLS"; exit "${TEST_MOUNT_RC:-0}"')
         self.stub("sync", 'echo sync >> "$TEST_CALLS"; exit "${TEST_SYNC_RC:-0}"')
         self.stub("OnOffDSICommander", 'echo hmi >> "$TEST_CALLS"; exit "${TEST_HMI_RC:-0}"')
@@ -73,7 +73,12 @@ class InstallerTest(unittest.TestCase):
                   'shift 2\n'
                   'TEST_NODE=${TEST_FORWARD_NODE:-hu-omap}; export TEST_NODE\n'
                   'exec "$@"')
-        self.stub("pidin", 'if [ "${TEST_PIDIN_RC:-0}" != 0 ]; then exit 1; fi\n'
+        self.stub("pidin", 'if [ "$1" = -p ]; then\n'
+                  '  [ "${TEST_CREDENTIALS_RC:-0}" = 0 ] || exit 1\n'
+                  '  [ "${TEST_NODE:-hu-omap}" != hu-jacinto ] || exit 1\n'
+                  '  echo "pid euid"; echo "$2 ${TEST_EUID:-0}"; exit 0\n'
+                  'fi\n'
+                  'if [ "${TEST_PIDIN_RC:-0}" != 0 ]; then exit 1; fi\n'
                   'echo "pid Arguments"\n'
                   'if [ -f "$TEST_ROOT/processes" ]; then cat "$TEST_ROOT/processes"; fi')
         self.usb = self.payload()
@@ -292,9 +297,7 @@ class InstallerTest(unittest.TestCase):
         self.stub("uname", 'if [ "$1" = -s ]; then echo QNX; else echo unknown-node; fi')
         self.run_script("install", ok=False)
         (self.bin / "uname").write_text(original_uname)
-        self.stub("id", "echo 1000")
-        self.run_script("install", ok=False)
-        self.stub("id", "echo 0")
+        self.run_script("install", TEST_EUID="1000", ok=False)
         self.run_script("install", TEST_PIDIN_RC="1", ok=False)
         self.assertFalse(self.calls.exists())
 
@@ -366,7 +369,10 @@ class InstallerTest(unittest.TestCase):
         waiter = threading.Thread(target=child.wait, daemon=True)
         waiter.start()
         pidin = self.bin / "pidin"
-        pidin.write_text(f"#!{sys.executable}\nimport os\nprint('pid Arguments')\n"
+        pidin.write_text(f"#!{sys.executable}\nimport os, sys\n"
+                         "if sys.argv[1] == '-p':\n"
+                         " print('pid euid'); print(sys.argv[2]+' 0'); sys.exit(0)\n"
+                         "print('pid Arguments')\n"
                          f"try: os.kill({child.pid}, 0)\nexcept ProcessLookupError: pass\n"
                          f"else: print('{child.pid} /opt/aa/nbt-aad')\n")
         self.run_script("install")
@@ -463,6 +469,38 @@ class InstallerTest(unittest.TestCase):
 
     def test_dry_run_with_restart_flag_does_not_restart(self):
         self.run_script('install', '--dry-run', '--restart-hmi')
+        self.assertFalse(self.calls.exists())
+
+    def test_no_arguments_show_usage_without_empty_at_expansion(self):
+        result = self.run_script(ok=False)
+        self.assertIn('Usage:', result.stdout)
+        self.assertNotIn('parameter not set', result.stderr)
+        self.assertFalse(self.calls.exists())
+
+    def test_status_and_install_do_not_use_id_or_printf(self):
+        # Shadow even the host shell's printf builtin, matching the production
+        # image where it is absent. id is already a failing stub in every test.
+        content = self.script.read_text().replace('ACTIVE=0\n',
+            'ACTIVE=0\nprintf() { echo forbidden-printf >> "$TEST_CALLS"; return 127; }\n', 1)
+        self.script.write_text(content)
+        self.run_script('status')
+        self.run_script('install', '--restart-hmi')
+        self.assertNotIn('forbidden-', self.calls.read_text())
+
+    def test_credential_failure_cannot_be_bypassed_by_root_environment(self):
+        for uid in ('1000', 'unknown', ''):
+            # Empty expands to 0 in the mock; exercise it with custom output below.
+            if not uid:
+                continue
+            with self.subTest(uid=uid):
+                self.run_script('install', TEST_EUID=uid, USER='root', LOGNAME='root', ok=False)
+        self.run_script('status', TEST_CREDENTIALS_RC='1', ok=False)
+        self.assertFalse(self.calls.exists())
+
+    def test_credential_output_must_match_current_shell(self):
+        self.stub('pidin', 'echo "pid euid"; echo "99999999 0"')
+        result = self.run_script('install', ok=False)
+        self.assertIn('Root SSH access could not be verified', result.stderr)
         self.assertFalse(self.calls.exists())
 
 
