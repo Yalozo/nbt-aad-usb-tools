@@ -1,5 +1,13 @@
 # Changes
 
+## Windows/macOS app 0.1.6
+
+- Build native macOS .app bundles for Apple Silicon and Intel with the same installer/features as Windows.
+- Store Mac settings and offline packages in ~/Library/Application Support/NBT-AAD-PC; retain Windows storage compatibility.
+- Use Mac fonts and run GUI tests on both desktop platforms.
+- Verify frozen app startup, code signatures, native architecture and minimum macOS deployment targets; preserve bundle symlinks in ZIP downloads.
+- Add macOS build instructions and separate GitHub Actions artifacts, including local-network permission text and first-launch instructions for ad-hoc signed builds.
+
 ## 0.4.0 / Windows app 0.1.5
 
 - Read installed daemon/plugin build banners without executing either binary; match all six installed file hashes against the offline package library. Manual installs are supported; unknown or mixed builds are not guessed.
