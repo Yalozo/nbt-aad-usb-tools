@@ -19,6 +19,8 @@ class FakeSession:
         self.fail_verify = False
         self.fail_reset = False
         self.flat_shmem = False
+        self.fail_reset_without_ack = False
+        self.reset_exit_code = None
 
     def close(self):
         self.closed = True
@@ -48,7 +50,11 @@ class FakeSession:
         if 'test -s /opt/aa' in command and self.fail_verify:
             raise RemoteError('verification failed')
         if 'OnOffDSICommander appreset' in command:
+            if self.fail_reset_without_ack:
+                raise RemoteError('SSH closed before reset acknowledgment')
             self.log('NBT_AAD_RESTART_REQUESTED')
+            if self.reset_exit_code is not None:
+                raise RemoteExitError(self.reset_exit_code, 'reset rejected')
             if self.fail_reset:
                 raise RemoteError('SSH closed during reboot')
         return b'Present: /opt/aa/nbt-aad\n'
@@ -122,6 +128,35 @@ class ControllerTest(unittest.TestCase):
     def test_restart_can_be_disabled(self):
         self.execute(reboot=False)
         self.assertNotIn('appreset', self.commands())
+
+    def test_standalone_restart_needs_no_script_or_package_and_makes_no_install_changes(self):
+        self.script.unlink()
+        self.session.node = 'hu-jacinto'
+        message = self.installer.execute('restart', self.connection, reboot=False)
+        self.assertIn('Перезагрузка ГУ запрошена', message)
+        self.assertFalse(self.session.uploads)
+        self.assertNotIn('mkdir', self.commands())
+        self.assertNotIn('--source', self.commands())
+        self.assertIn('on -f /net/hu-omap', self.commands())
+        self.assertTrue(self.session.closed)
+
+    def test_standalone_restart_failure_is_an_error_without_file_success_claim(self):
+        for flag in ('fail_reset_without_ack', 'reset_exit_code'):
+            with self.subTest(flag=flag):
+                setattr(self.session, flag, True if flag.startswith('fail') else 1)
+                with self.assertRaises(RemoteError) as error:
+                    self.execute('restart')
+                self.assertNotIn('Файлы обработаны успешно', str(error.exception))
+                setattr(self.session, flag, False if flag.startswith('fail') else None)
+        self.assertFalse(self.session.uploads)
+
+    def test_standalone_restart_can_disconnect_after_acknowledgment(self):
+        self.session.fail_reset = True
+        self.assertIn('Команда перезагрузки отправлена', self.execute('restart'))
+
+    def test_reset_error_after_install_keeps_confirmed_file_result(self):
+        self.session.reset_exit_code = 1
+        self.assertIn('Файлы обработаны успешно', self.execute())
 
     def test_qnx_flat_shmem_upload_uses_real_var_filesystem(self):
         self.session.node = 'hu-jacinto'
