@@ -21,11 +21,41 @@ class WindowsUITest(unittest.TestCase):
             self.assertEqual(app.host.get(), '169.254.199.99')
             self.assertTrue(app.reboot.get())
             self.assertFalse(app.preview.get())
+            self.assertEqual(app.removal.current(), 0)
             config = (Path(directory) / 'settings.json').read_text(encoding='utf-8')
             self.assertNotIn('password', config)
             self.assertEqual(json.loads(config)['port'], 22)
             self.assertNotIn('unique-secret-password', app.logfile.read_text(encoding='utf-8'))
             app.close()
+
+    def test_removal_mode_and_full_cleanup_confirmation(self):
+        import tkinter as tk
+        from nbt_aad_pc.ui import App
+        with tempfile.TemporaryDirectory() as directory:
+            root = tk.Tk(); root.withdraw()
+            app = App(root, state=directory)
+            try:
+                with patch('nbt_aad_pc.ui.Installer') as installer, \
+                     patch.object(app, 'get_package', side_effect=AssertionError('uninstall must not download')), \
+                     patch.object(app, 'start', side_effect=lambda title, work: work()), \
+                     patch('nbt_aad_pc.ui.messagebox.askyesno', return_value=False) as question:
+                    app.operate('uninstall')
+                    self.assertEqual(installer.return_value.execute.call_args.kwargs['removal'], 'keep')
+                    question.assert_not_called()
+                    installer.reset_mock()
+                    app.removal.current(1)
+                    app.operate('uninstall')
+                    installer.assert_not_called()
+                    question.assert_called_once()
+                    question.return_value = True
+                    app.operate('uninstall')
+                    self.assertEqual(installer.return_value.execute.call_args.kwargs['removal'], 'purge')
+                app.busy = True
+                app.update_controls()
+                self.assertEqual(str(app.removal.cget('state')), 'disabled')
+                app.busy = False
+            finally:
+                app.close()
 
     def test_offline_library_selection_persists_and_restart_does_not_download(self):
         import hashlib
