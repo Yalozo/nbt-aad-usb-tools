@@ -8,10 +8,12 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import stat
+import ssl
 import tempfile
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 import zipfile
+import certifi
 
 REPO = 'Sq00ky/Supra-iDrive6-Android-Auto'
 API = f'https://api.github.com/repos/{REPO}/releases?per_page=100'
@@ -31,10 +33,18 @@ def _https(url):
     return url
 
 
+def tls_context():
+    context = ssl.create_default_context()
+    # A packaged Mac app must not depend on the build machine's Python CA path.
+    # Keep system roots when available and add the bundled public CA store.
+    context.load_verify_locations(cafile=certifi.where())
+    return context
+
+
 def fetch(url, limit=MAX_ASSET):
     request = Request(_https(url), headers={'User-Agent': 'NBT-AAD-PC/0.1',
                                            'Accept': 'application/vnd.github+json'})
-    with urlopen(request, timeout=40) as response:
+    with urlopen(request, timeout=40, context=tls_context()) as response:
         _https(response.url)
         data = response.read(limit + 1)
     if len(data) > limit:
