@@ -120,6 +120,15 @@ class App:
         self.add_button(local_row, 'Обновить список', self.update_cache_label).pack(side='left', padx=(10, 0))
         self.package_label = tk.StringVar(value='Скачанный комплект: нет')
         ttk.Label(frame, textvariable=self.package_label, foreground='#526970').pack(anchor='w', pady=(8, 13))
+        removal_row = ttk.Frame(frame)
+        removal_row.pack(fill='x', pady=(0, 8))
+        ttk.Label(removal_row, text='Режим удаления:').pack(side='left', padx=(0, 10))
+        self.removal = ttk.Combobox(removal_row, state='readonly', width=65, values=[
+            'Сохранить настройки и резервные копии',
+            'Полная очистка: программа, настройки, журналы и резервные копии'])
+        self.removal.current(0)
+        self.removal.pack(side='left', fill='x', expand=True)
+        self.widgets.append(self.removal)
         actions = ttk.Frame(frame)
         actions.pack(fill='x')
         for title, command, accent in [
@@ -259,7 +268,7 @@ class App:
 
     def update_controls(self):
         for widget in self.widgets:
-            state = 'readonly' if widget in (self.release, self.local_release) else 'normal'
+            state = 'readonly' if widget in (self.release, self.local_release, self.removal) else 'normal'
             widget.configure(state='disabled' if self.busy else state)
         if not self.busy:
             if self.offline.get():
@@ -289,6 +298,15 @@ class App:
         return package
 
     def operate(self, action):
+        removal = 'purge' if self.removal.current() == 1 else 'keep'
+        if action == 'uninstall' and removal == 'purge':
+            if not messagebox.askyesno('Полное удаление NBT-AAD',
+                'Будут безвозвратно удалены программа и плагин NBT-AAD, настройки /opt/aa и /var/opt/aa, '
+                'все резервные копии нашего установщика, его временные загрузки и известные файлы NBT-AAD в RAM.\n\n'
+                'Откат из этих резервных копий станет невозможен. Общие кэши HMI, системные журналы, '
+                'активация SSH, CarPlay и сопряжения телефона сохраняются. Файлы на ПК и флешке сохраняются.\n\n'
+                'Выполнить полное удаление?', parent=self.root):
+                return
         try:
             connection = self.snapshot()
         except (ValueError, OSError) as exc:
@@ -300,7 +318,7 @@ class App:
         def work():
             package = self.get_package(offline, preview, selected, local_identifier) if action == 'install' else None
             installer = Installer(installer_script(), self.state, self.log, self.confirm)
-            return installer.execute(action, connection, package, reboot)
+            return installer.execute(action, connection, package, reboot, removal=removal)
         self.start('Перезагрузка головного устройства…' if action == 'restart' else 'Работа с головным устройством…', work)
 
     def prepare(self):
