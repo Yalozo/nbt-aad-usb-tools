@@ -97,7 +97,7 @@ class Installer:
                 raise PackageError('Не выбран комплект NBT-AAD.')
             files.update({name: file.read_bytes() for name, file in package.files().items()})
         if sum(map(len, files.values())) > 16 * 1024 * 1024:
-            raise PackageError('Комплект слишком велик для временной загрузки в память ГУ.')
+            raise PackageError('Комплект слишком велик для временной загрузки на ГУ.')
         self.log('Подключение по SSH к %s:%s…' % (connection.host, connection.port))
         session = self.session_factory(connection.host, connection.port, connection.password,
                                        self.state / 'known_hosts', self.confirm, self.log)
@@ -110,7 +110,7 @@ class Installer:
                 # No staging or writes to the HU in status mode.
                 command = on_omap(node, '/bin/sh -s -- status')
                 return session.run(command, data=script).decode('utf-8', errors='replace')
-            stage = '/dev/shmem/nbt-aad-pc-' + uuid.uuid4().hex
+            stage = '/var/opt/nbt-aad-pc-' + uuid.uuid4().hex
             target = remote_path(node, stage)
             session.run('umask 077; mkdir ' + shlex.quote(target) +
                         ' && mkdir ' + shlex.quote(target + '/release'), stream=False)
@@ -148,11 +148,11 @@ class Installer:
         finally:
             if stage and not completed:
                 self.log('При незавершённой операции временные файлы оставлены в ' + stage +
-                         '. Они исчезнут после перезагрузки; резервные копии не удаляются.')
+                         '. Они сохранены для диагностики; резервные копии не удаляются.')
             session.close()
 
     @staticmethod
     def cleanup(session, node, stage):
-        if not re.fullmatch(r'/dev/shmem/nbt-aad-pc-[0-9a-f]{32}', stage):
+        if not re.fullmatch(r'/var/opt/nbt-aad-pc-[0-9a-f]{32}', stage):
             raise RemoteError('Недопустимый путь очистки.')
         session.run('rm -rf ' + shlex.quote(remote_path(node, stage)), stream=False)
