@@ -1,5 +1,14 @@
 # Changes
 
+## 0.4.0 / Windows app 0.1.5
+
+- Read installed daemon/plugin build banners without executing either binary; match all six installed file hashes against the offline package library. Manual installs are supported; unknown or mixed builds are not guessed.
+- Add uninstall --keep-config, retaining /opt/aa configuration (including nbt-aad.env) and /var/opt/aa for reinstall. Windows uses this mode by default.
+- Add explicit irreversible uninstall --purge, removing known project runtime files, settings, installer backups and strictly named SSH uploads, including remnants after prior removal. Shared system/HMI caches, SSH and CarPlay remain untouched.
+- Show removal mode in the Windows UI with a separate full-cleanup confirmation. Keep the original archival CLI uninstall for compatibility.
+- Preserve transaction rollback before erasure; report erasure failures without a success claim or restart, permitting cleanup retries.
+- Extend filesystem, offline version-identification, controller and native Windows GUI tests.
+
 ## Windows app 0.1.4
 
 - Add a standalone head-unit restart button that checks SSH/QNX/root and does not load an installer or package.
