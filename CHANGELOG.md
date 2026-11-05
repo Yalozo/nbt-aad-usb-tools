@@ -1,5 +1,14 @@
 # Changes
 
+## 0.3.3 / Windows app 0.1.3
+
+- Fix QNX ENOSYS from mkdir under /dev/shmem, which has no subdirectory support.
+- Store temporary binary-header checks on the selected writable USB/source filesystem; preserve cleanup on success/error.
+- Move the atomic directory lock to /var/opt and verify its PID owner before cleanup.
+- Move Windows SSH staging to /var/opt; retain strict path validation and readback checks. Failed-run staging may persist and is reported accurately.
+- Add filesystem-semantic tests that reject all mkdir calls below simulated QNX /dev/shmem, for both USB and SSH paths.
+- Map production SOURCE_ROOT/LOCK locations faithfully in tests instead of assuming directory-capable host RAM semantics.
+
 ## 0.3.2 / Windows app 0.1.2
 
 - Adapt to the confirmed production hu-omap tool inventory; remove awk, cmp, od and rmdir dependencies.
