@@ -1,5 +1,11 @@
 # Changes
 
+## Windows/macOS app 0.1.7
+
+- Explain each action in hover/keyboard-focus tooltips, including which settings and backups survive uninstall and are erased by full NBT-AAD cleanup.
+- Hide/cancel tooltips when operations start, buttons are pressed, focus moves or the window closes.
+- Capture real Windows application windows with verified release packages for the graphical installation guide.
+
 ## Windows/macOS app 0.1.6
 
 - Order actions as status, install/update, uninstall preserving settings, full NBT-AAD cleanup and restart. Move pre-download beside online releases; refresh saved packages automatically.
