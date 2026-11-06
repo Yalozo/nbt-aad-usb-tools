@@ -92,6 +92,16 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual(len(self.session.uploads), 2)
         self.assertTrue(self.session.closed)
 
+    def test_optional_pf_aa_upload_is_verified_without_applying_rules(self):
+        helper = self.root / 'pf_aa'
+        helper.write_bytes(b'validated package helper')
+        original = self.package.files
+        self.package.files = lambda: {**original(), 'pf_aa': helper}
+        self.execute()
+        self.assertEqual(len(self.session.uploads), 3)
+        self.assertIn('test -x /opt/aa/pf_aa', self.commands())
+        self.assertNotIn('pf_aa --install', self.commands())
+
     def test_jacinto_uses_qnet_upload_and_omap_reset(self):
         self.session.node = 'hu-jacinto'
         self.execute()
