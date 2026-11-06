@@ -145,6 +145,8 @@ class Installer:
                 raise RemoteError('Нет подтверждения успешной операции. Проверьте журнал.')
             # Independently verify the resulting paths on the actual OMAP node.
             present = 'test -s /opt/aa/nbt-aad && test -s /opt/hmi/ID5/data/ro/Plugins/NbtAad/libNbtAad.so'
+            if action == 'install' and 'pf_aa' in files:
+                present += ' && test -s /opt/aa/pf_aa && test -x /opt/aa/pf_aa'
             absent = ('test ! -e /opt/aa/nbt-aad && test ! -e /opt/hmi/ID5/data/ro/Plugins/NbtAad'
                       if removal == 'keep' else
                       'test ! -e /opt/aa && test ! -e /opt/hmi/ID5/data/ro/Plugins/NbtAad && '
