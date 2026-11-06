@@ -34,11 +34,14 @@ def plugin():
             'NbtAad.xml': b'<app/>', **{name: resources() for name in r.FILES[-2:]}}
 
 
-def release(tag='Installer', date='2026-11-03T10:00:00Z', preview=False):
+def release(tag='Installer', date='2026-11-03T10:00:00Z', preview=False, helper=False):
     payloads = [elf(), zip_bytes({'Release/' + name: data for name, data in plugin().items()})]
+    names = ['nbt-aad', 'Releases.zip']
+    if helper:
+        names.append('pf_aa'); payloads.append(elf() + b'pf_aa 1.1: Android Auto')
     assets = [{'name': name, 'size': len(data), 'digest': 'sha256:' + hashlib.sha256(data).hexdigest(),
                'browser_download_url': f'https://github.com/{r.REPO}/releases/download/{tag}/{name}'}
-              for name, data in zip(('nbt-aad', 'Releases.zip'), payloads)]
+              for name, data in zip(names, payloads)]
     return {'id': 1, 'tag_name': tag, 'name': tag + ' 1.8.72', 'published_at': date,
             'prerelease': preview, 'draft': False, 'html_url': f'https://github.com/{r.REPO}/releases/tag/{tag}',
             'assets': assets}, dict(zip((a['browser_download_url'] for a in assets), payloads))
@@ -60,6 +63,44 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(package.files()['release/NbtAad_ALL_Texts.zip'].read_bytes(), resources())
         self.assertEqual(r.cached_package(self.cache).path, package.path)
         self.assertEqual(len(list(self.cache.glob('download-*'))), 0)
+
+    def test_optional_pf_aa_is_verified_cached_and_distinguishes_old_same_tag_package(self):
+        old = r.download_package(self.release, self.cache, downloader=self.download)
+        new, payloads = release(helper=True)
+        package = r.download_package(new, self.cache, downloader=lambda url, limit: payloads[url])
+        self.assertEqual(len(package.files()), 7)
+        self.assertEqual(package.files()['pf_aa'].read_bytes(), elf() + b'pf_aa 1.1: Android Auto')
+        self.assertEqual(len(package.metadata['assets']), 3)
+        self.assertNotEqual(old.path, package.path)
+        self.assertEqual(len(r.local_package(self.cache, old.path.name).files()), 6)
+        self.assertEqual(len(r.local_package(self.cache, package.path.name).files()), 7)
+        package.files()['pf_aa'].write_bytes(b'corrupted')
+        with self.assertRaises(r.PackageError):
+            r.local_package(self.cache, package.path.name)
+
+    def test_optional_pf_aa_rejects_duplicates_missing_digest_bad_size_or_architecture(self):
+        for defect in ('duplicate', 'digest', 'size', 'architecture'):
+            with self.subTest(defect=defect):
+                rel, data = release(helper=True)
+                asset = rel['assets'][2]
+                if defect == 'duplicate': rel['assets'].append(asset.copy())
+                elif defect == 'digest': asset['digest'] = None
+                elif defect == 'size': asset['size'] += 1
+                else:
+                    data[asset['browser_download_url']] = b'not ARM'
+                    asset.update(size=7, digest='sha256:' + hashlib.sha256(b'not ARM').hexdigest())
+                with self.assertRaises(r.PackageError):
+                    r.download_package(rel, self.cache, downloader=lambda url, limit: data[url])
+                self.assertFalse((self.cache / 'last.json').exists())
+
+    def test_testing_unstable_and_test_build_labels_are_not_default_releases(self):
+        for name in ('[TESTING] Android Auto', '[UNSTABLE] AA', 'MOST Refactor Test Build'):
+            with self.subTest(name=name):
+                rel, _ = release('experiment', '2026-11-06T01:00:00Z')
+                rel['name'] = name
+                fetch = lambda *a: json.dumps([self.release, rel]).encode()
+                self.assertEqual(r.list_releases(downloader=fetch)[0]['tag_name'], 'Installer')
+                self.assertEqual(r.list_releases(True, downloader=fetch)[0]['tag_name'], 'experiment')
 
     def test_cached_file_corruption_is_detected(self):
         package = r.download_package(self.release, self.cache, downloader=self.download)
