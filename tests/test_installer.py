@@ -52,6 +52,7 @@ class InstallerTest(unittest.TestCase):
             "LOCK": mapped_constant('LOCK'),
             "RAM": mapped_constant('RAM'),
             "TMP": self.root / 'tmp',
+            "PF_FALLBACK": self.root / 'etc/pf.conf',
         }
         for path in self.paths.values():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,6 +156,75 @@ class InstallerTest(unittest.TestCase):
         self.assertTrue((self.backup() / "COMMITTED").exists())
         self.assertFalse(self.paths["LOCK"].exists())
         self.assertNotIn("hmi", self.calls.read_text())
+
+    def test_optional_pf_aa_is_copied_executable_but_never_run(self):
+        helper = elf(b'pf_aa 1.1: test')
+        (self.usb / 'pf_aa').write_bytes(helper)
+        before = self.snapshot()
+        self.run_script('install', '--dry-run')
+        self.assertEqual(before, self.snapshot())
+        result = self.run_script('install')
+        self.assertIn('Network rules are not applied automatically', result.stdout)
+        dest = self.paths['AA'] / 'pf_aa'
+        self.assertEqual(dest.read_bytes(), helper)
+        self.assertEqual(dest.stat().st_mode & 0o777, 0o755)
+        # The test-owned helper is ARM ELF on a non-ARM host; executing it would fail.
+        self.run_script('uninstall', '--keep-config')
+        self.assertFalse(dest.exists())
+        backups = list(self.paths['BACKUPS'].glob('*-uninstall'))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual((backups[0] / 'aa/pf_aa').read_bytes(), helper)
+
+    def test_invalid_optional_pf_aa_is_rejected_before_remount(self):
+        for data in (b'not ARM', elf(machine=62)):
+            with self.subTest(data=data[:7]):
+                (self.usb / 'pf_aa').write_bytes(data)
+                self.run_script('install', ok=False)
+                self.assertFalse(self.calls.exists())
+
+    def test_optional_pf_aa_copy_failure_rolls_back_with_previous_helper(self):
+        self.old_install()
+        (self.paths['AA'] / 'pf_aa').write_bytes(elf(b'old-helper'))
+        (self.usb / 'pf_aa').write_bytes(elf(b'new-helper'))
+        self.fail_rename('/staged-plugin', '/NbtAad')
+        self.run_script('install', ok=False)
+        self.assert_old_intact()
+        self.assertEqual((self.paths['AA'] / 'pf_aa').read_bytes(), elf(b'old-helper'))
+
+    def test_purge_preserves_pf_backup_and_files_until_separate_rules_are_restored(self):
+        self.old_install()
+        (self.paths['AA'] / 'pf.bak').write_text('block all\n')
+        (self.paths['AA'] / 'pf_aa').write_bytes(elf())
+        conf = self.paths['FS_ROOT'] / 'etc/pf.conf'
+        conf.parent.mkdir()
+        conf.write_text('block all\npass quick on uap0 proto tcp to any port 5277 keep state\n')
+        before = self.snapshot()
+        result = self.run_script('uninstall', '--purge', ok=False)
+        self.assertIn('Restore them with pf_aa --uninstall', result.stderr)
+        self.assertEqual(before, self.snapshot())
+        # A backup alone must not block cleanup after the utility restored pf.conf.
+        conf.write_text('block all\n# Android Auto 5277 was removed\n')
+        self.run_script('uninstall', '--purge')
+        self.assertEqual(conf.read_text(), 'block all\n# Android Auto 5277 was removed\n')
+        self.assertFalse(self.paths['AA'].exists())
+
+    def test_purge_keeps_pf_backup_when_system_configuration_cannot_be_inspected(self):
+        self.old_install()
+        (self.paths['AA'] / 'pf.bak').write_text('block all\n')
+        self.run_script('uninstall', '--purge', ok=False)
+        self.assert_old_intact()
+        self.assertTrue((self.paths['AA'] / 'pf.bak').exists())
+
+    def test_purge_protects_pf_backup_from_an_earlier_archival_uninstall(self):
+        backup = self.paths['BACKUPS'] / 'old-uninstall/aa'
+        backup.mkdir(parents=True)
+        (backup / 'pf.bak').write_text('block all\n')
+        conf = self.paths['FS_ROOT'] / 'etc/pf.conf'
+        conf.parent.mkdir()
+        conf.write_text('block all\npass quick on wfd0 proto tcp to any port 5277 keep state\n')
+        before = self.snapshot()
+        self.run_script('uninstall', '--purge', ok=False)
+        self.assertEqual(before, self.snapshot())
 
     def test_dry_run_has_no_filesystem_changes(self):
         self.old_install()
