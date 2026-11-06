@@ -1,5 +1,13 @@
 # Changes
 
+## USB 0.4.1 / Windows/macOS app 0.1.8
+
+- Download optional pf_aa from the same upstream release and validate its digest, size and ARM ELF32 header. Preserve six-file cache compatibility and include the helper digest in new content-addressed package identities.
+- Install pf_aa as an executable in /opt/aa without applying system firewall changes automatically; display its embedded version and verify six- or seven-file installed packages.
+- Remove the helper during ordinary uninstall; protect pf.bak, including archived copies, from full purge while AA firewall rules remain or pf.conf cannot be inspected.
+- Exclude TESTING/UNSTABLE/test-build names from automatic non-preview selection.
+- Extend download/cache, offline status, SSH transfer, QNX staging/rollback and purge-preflight tests.
+
 ## Windows/macOS app 0.1.7
 
 - Explain each action in hover/keyboard-focus tooltips, including which settings and backups survive uninstall and are erased by full NBT-AAD cleanup.
