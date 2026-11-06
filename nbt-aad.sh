@@ -7,7 +7,7 @@ LC_ALL=C
 export LC_ALL
 umask 077
 
-VERSION=0.4.0
+VERSION=0.4.1
 REMOTE_NODE=/net/hu-omap
 FS_ROOT=/fs/sda0
 AA=/opt/aa
@@ -20,6 +20,7 @@ SOURCE_ROOT=/var/opt
 LOCK=/var/opt/nbt-aad-usb-tools.lock
 RAM=/dev/shmem
 TMP=/tmp
+PF_FALLBACK=/etc/pf.conf
 FILES='libNbtAad.so NbtAad.manifest NbtAad.xml NbtAad_ALL_Texts.zip NbtAad_ALL_Images.zip'
 
 ACTION=
@@ -44,7 +45,7 @@ exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
 usage() {
     cat <<'EOF'
-NBT-AAD USB Tools 0.4.0
+NBT-AAD USB Tools 0.4.1
 Usage: sh nbt-aad.sh install|uninstall|status [options]
   --usb /mnt/umass...   Select one USB drive explicitly
   --source PATH        Use a private /var/opt/nbt-aad-pc-<32 hex> SSH upload
@@ -132,7 +133,7 @@ done <<EOF
 $credentials
 EOF
 [ "$root_found" -eq 1 ] && [ "$root_invalid" -eq 0 ] || die 'Root SSH access could not be verified with pidin (effective UID must be 0).'
-for target in "$AA" "$AA/nbt-aad" "$PLUGIN" "$SETTINGS" "$BACKUPS" "$VAR_BACKUPS"; do
+for target in "$AA" "$AA/nbt-aad" "$AA/pf_aa" "$AA/pf.bak" "$PLUGIN" "$SETTINGS" "$BACKUPS" "$VAR_BACKUPS"; do
     [ ! -L "$target" ] || die "Refusing a symbolic-link target: $target"
 done
 for target in "$AA" "$PLUGIN" "$SETTINGS" "$BACKUPS" "$VAR_BACKUPS"; do
@@ -159,7 +160,7 @@ EOF
 
 if [ "$ACTION" = status ]; then
     say "NBT-AAD USB Tools $VERSION"
-    for target in "$AA/nbt-aad" "$PLUGIN" "$SETTINGS"; do
+    for target in "$AA/nbt-aad" "$AA/pf_aa" "$AA/pf.bak" "$PLUGIN" "$SETTINGS"; do
         if exists "$target"; then say "Present: $target"; else say "Absent:  $target"; fi
     done
     pids=$(daemon_pids) || exit 1
@@ -286,6 +287,7 @@ validate_payload() (
     trap 'exit 130' 2
     trap 'exit 143' 15
     check_elf "$USB/nbt-aad"
+    if exists "$USB/pf_aa"; then check_elf "$USB/pf_aa"; fi
     check_elf "$PAYLOAD/libNbtAad.so"
     for item in $FILES; do
         [ ! -L "$PAYLOAD/$item" ] || die "Refusing a symbolic-link payload: $item"
@@ -323,7 +325,7 @@ purge_paths() {
     for target in "$RAM"/nbt-aad.log "$RAM"/nbt-aad-app.log \
         "$RAM"/nbt-aad-state "$RAM"/nbt-aad-pdc "$RAM"/nbt-aad-gear \
         "$RAM"/nbt-aad-daynight "$RAM"/nbt-aad-lm1280 "$RAM"/nbt-aad-kombi-nav.shown \
-        "$TMP"/nbt-aad.log "$TMP"/nbt-aad-app.log; do
+        "$TMP"/nbt-aad.log "$TMP"/nbt-aad-app.log "$RAM"/pf_aa-check.conf; do
         exists "$target" && echo "$target"
     done
     for target in "$SOURCE_ROOT"/nbt-aad-pc-*; do
@@ -341,6 +343,27 @@ if [ "$REMOVE_MODE" = purge ]; then
 fi
 pids=$(daemon_pids) || exit 1
 say "Running daemon PID(s): ${pids:-none} (will receive SIGTERM, no forced kill)."
+# pf_aa is deployed as an optional utility, never executed by this installer.
+# If someone used it separately, do not erase the only restoration backup while
+# AA rules still exist in the system firewall. This preflight is read-only.
+pf_backup_found=0
+if [ "$REMOVE_MODE" = purge ]; then
+    for pf_backup in "$AA/pf.bak" "$BACKUPS"/*/aa/pf.bak \
+        "$BACKUPS"/*/failed-aa/pf.bak "$BACKUPS"/*/staged-aa/pf.bak; do
+        if exists "$pf_backup"; then pf_backup_found=1; fi
+    done
+fi
+if [ "$pf_backup_found" -eq 1 ]; then
+    pf_config=$FS_ROOT/etc/pf.conf
+    [ -r "$pf_config" ] || pf_config=$PF_FALLBACK
+    [ -r "$pf_config" ] || die 'Cannot inspect pf.conf; pf.bak must be preserved. Restore PF rules before full cleanup.'
+    while IFS= read -r pf_line || [ -n "$pf_line" ]; do
+        pf_rule=${pf_line%%#*}
+        case "$pf_rule" in
+            *pass*5277*) die 'PF rules for Android Auto remain in pf.conf. Restore them with pf_aa --uninstall before full cleanup; pf.bak and all application files are preserved.' ;;
+        esac
+    done < "$pf_config"
+fi
 if [ "$ACTION" = uninstall ] && [ "$REMOVE_MODE" != purge ] && ! exists "$AA" && ! exists "$PLUGIN" && ! exists "$SETTINGS"; then
     say 'Already uninstalled. No changes.'
     exit 0
@@ -434,7 +457,7 @@ echo "$ACTION" > "$BACKUP/action"
 if [ "$ACTION" = uninstall ] && [ "$REMOVE_MODE" = keep ] && [ -d "$AA" ]; then
     mkdir "$BACKUP/staged-aa"
     cp -Rp "$AA/." "$BACKUP/staged-aa/"
-    rm -f "$BACKUP/staged-aa/nbt-aad"
+    rm -f "$BACKUP/staged-aa/nbt-aad" "$BACKUP/staged-aa/pf_aa"
     say 'Configuration files in /opt/aa and /var/opt/aa will remain in place.'
 fi
 if [ "$ACTION" = install ]; then
@@ -445,12 +468,19 @@ if [ "$ACTION" = install ]; then
     cp "$USB/nbt-aad" "$BACKUP/staged-aa/nbt-aad"
     chmod 755 "$BACKUP/staged-aa" "$BACKUP/staged-aa/nbt-aad" "$BACKUP/staged-plugin"
     diff "$USB/nbt-aad" "$BACKUP/staged-aa/nbt-aad" >/dev/null 2>&1 || die 'Daemon copy verification failed.'
+    if exists "$USB/pf_aa"; then
+        [ ! -L "$BACKUP/staged-aa/pf_aa" ] || die 'The existing pf_aa is a symbolic link.'
+        cp "$USB/pf_aa" "$BACKUP/staged-aa/pf_aa"
+        chmod 755 "$BACKUP/staged-aa/pf_aa"
+        diff "$USB/pf_aa" "$BACKUP/staged-aa/pf_aa" >/dev/null 2>&1 || die 'pf_aa copy verification failed.'
+        say 'Optional pf_aa staged and verified. Network rules are not applied automatically.'
+    fi
     for item in $FILES; do
         cp "$PAYLOAD/$item" "$BACKUP/staged-plugin/$item"
         chmod 644 "$BACKUP/staged-plugin/$item"
         diff "$PAYLOAD/$item" "$BACKUP/staged-plugin/$item" >/dev/null 2>&1 || die "Copy verification failed: $item"
     done
-    say 'Six release files staged and compared with the source originals.'
+    say 'Release files staged and compared with the source originals.'
 fi
 
 # File staging is finished before stopping the running daemon. Read the list
