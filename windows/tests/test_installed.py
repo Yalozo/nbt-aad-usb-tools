@@ -25,6 +25,8 @@ class InstalledVersionTest(unittest.TestCase):
             class Reader:
                 def run(self, command, **kwargs):
                     calls.append(command)
+                    if '/pf_aa;' in command:
+                        return files.get('pf_aa', b'')
                     for name, data in files.items():
                         if '/' + name.split('/')[-1] + ';' in command:
                             return data
@@ -38,6 +40,23 @@ class InstalledVersionTest(unittest.TestCase):
                 self.assertNotIn('Комплект совпадает', changed)
             self.assertTrue(all('/net/hu-omap/' in c for c in calls))
             self.assertTrue(all('cat ' in c and '--version' not in c and 'mkdir' not in c for c in calls))
+
+    def test_status_matches_helper_hash_and_reports_version_without_running_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            rel, payloads = release(helper=True)
+            package = download_package(rel, Path(temp), downloader=lambda url, limit: payloads[url])
+            data = {name.split('/')[-1]: path.read_bytes() for name, path in package.files().items()}
+            class Reader:
+                def run(self, command, **kwargs):
+                    for name, content in data.items():
+                        if '/' + name + ';' in command: return content
+                    raise AssertionError(command)
+            result = installed_versions(Reader(), 'hu-omap', Path(temp), lambda _: None)
+            self.assertIn('pf_aa: 1.1', result)
+            self.assertIn('SHA-256 всех 7 файлов', result)
+            data['pf_aa'] += b'changed'
+            changed = installed_versions(Reader(), 'hu-omap', Path(temp), lambda _: None)
+            self.assertNotIn('Комплект совпадает', changed)
 
     def test_absent_install_does_not_guess_latest_or_stale_logs(self):
         class Empty:
