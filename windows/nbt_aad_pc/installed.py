@@ -18,6 +18,7 @@ def installed_versions(session, node, cache, log):
     prefix = '/net/hu-omap' if node == 'hu-jacinto' else ''
     paths = {'nbt-aad': '/opt/aa/nbt-aad', **{
         'release/' + name: '/opt/hmi/ID5/data/ro/Plugins/NbtAad/' + name for name in FILES}}
+    paths['pf_aa'] = '/opt/aa/pf_aa'
     payloads = {}
     for name, path in paths.items():
         quoted = shlex.quote(prefix + path)
@@ -38,14 +39,32 @@ def installed_versions(session, node, cache, log):
             continue
         version = embedded_version(data, plugin)
         lines.append(title + ': ' + (version or 'номер сборки не найден в файле') + '.')
+    helper = payloads['pf_aa']
+    if helper:
+        try:
+            validate_elf(helper)
+            versions = {v.decode('ascii') for v in re.findall(rb'pf_aa ([0-9]+(?:\.[0-9]+)+):', helper)}
+            version = next(iter(versions)) if len(versions) == 1 else 'версия не определена'
+            lines.append('Утилита pf_aa: ' + version + ' (наличие файла не означает применение правил).')
+        except PackageError:
+            lines.append('Утилита pf_aa: файл не является корректным ARM ELF32.')
+    else:
+        lines.append('Утилита pf_aa: отсутствует (в старых релизах её может не быть).')
     digests = {name: hashlib.sha256(data).hexdigest() for name, data in payloads.items()}
     matches = []
+    matched_count = 0
     for package in list_local_packages(cache, log):
-        if digests == package.metadata['files']:
+        expected = package.metadata['files']
+        if {name: digests[name] for name in expected} == expected:
+            if len(expected) > matched_count:
+                matches = []
+                matched_count = len(expected)
+            if len(expected) < matched_count:
+                continue
             release = package.metadata['release']
-            matches.append(package.label + ' [' + release['tag_name'] + ']')
+            matches.append(package.label + ' [' + release['tag_name'] + '] (' + str(len(expected)) + ' файлов)')
     if matches:
-        lines.append('Комплект совпадает по SHA-256 всех 6 файлов: ' + '; '.join(dict.fromkeys(matches)))
+        lines.append('Комплект совпадает по SHA-256 всех ' + str(matched_count) + ' файлов: ' + '; '.join(dict.fromkeys(matches)))
     elif any(payloads.values()):
         lines.append('Точного совпадения со скачанными комплектами нет. '
                      'Номера выше прочитаны из файлов; соответствие одному релизу не подтверждено.')
