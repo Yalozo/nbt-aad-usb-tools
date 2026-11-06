@@ -54,7 +54,7 @@ def fetch(url, limit=MAX_ASSET):
 
 def is_preview(release):
     return bool(release.get('prerelease') or
-                re.search(r'(?i)(alpha|beta|preview|(?:^|[-_.])rc\d*)',
+                re.search(r'(?i)(alpha|beta|preview|unstable|(?:^|[\W_])(?:rc\d*|test(?:ing)?)(?:$|[\W_]))',
                           (release.get('tag_name') or '') + ' ' + (release.get('name') or '')))
 
 
@@ -62,9 +62,12 @@ def select_assets(release):
     assets = release.get('assets', [])
     daemon = [x for x in assets if x.get('name') == 'nbt-aad']
     plugin = [x for x in assets if re.fullmatch(r'releases?\.zip', x.get('name', ''), re.I)]
+    helper = [x for x in assets if x.get('name') == 'pf_aa']
     if len(daemon) != 1 or len(plugin) != 1:
         raise PackageError('Релиз должен содержать один nbt-aad и один release(s).zip.')
-    for asset in daemon + plugin:
+    if len(helper) > 1:
+        raise PackageError('В релизе несколько файлов pf_aa.')
+    for asset in daemon + plugin + helper:
         if not 0 < asset.get('size', 0) <= MAX_ASSET:
             raise PackageError('Недопустимый размер файла релиза.')
         url = _https(asset.get('browser_download_url', ''))
@@ -72,7 +75,7 @@ def select_assets(release):
             raise PackageError('Файл находится за пределами официального проекта.')
         if not re.fullmatch(r'sha256:[0-9a-f]{64}', asset.get('digest') or ''):
             raise PackageError('GitHub не предоставил SHA-256 файла. Автоустановка остановлена.')
-    return daemon[0], plugin[0]
+    return (daemon[0], plugin[0], *helper)
 
 
 def list_releases(include_preview=False, downloader=fetch):
@@ -148,8 +151,11 @@ class Package:
         return r.get('name') or r['tag_name']
 
     def files(self):
-        return {'nbt-aad': self.path / 'nbt-aad',
-                **{'release/' + name: self.path / 'release' / name for name in FILES}}
+        files = {'nbt-aad': self.path / 'nbt-aad',
+                 **{'release/' + name: self.path / 'release' / name for name in FILES}}
+        if isinstance(self.metadata.get('files'), dict) and 'pf_aa' in self.metadata['files']:
+            files['pf_aa'] = self.path / 'pf_aa'
+        return files
 
 
 def load_package(path):
@@ -175,6 +181,8 @@ def load_package(path):
             raise PackageError('Сохранённый файл изменился: ' + name)
     validate_elf(files['nbt-aad'].read_bytes())
     validate_elf(files['release/libNbtAad.so'].read_bytes())
+    if 'pf_aa' in files:
+        validate_elf(files['pf_aa'].read_bytes())
     return package
 
 
@@ -195,17 +203,22 @@ def download_package(release, cache, log=lambda _: None, downloader=fetch):
         plugin = unpack_plugin(payloads[1])
         (work / 'release').mkdir()
         (work / 'nbt-aad').write_bytes(payloads[0])
+        helper_files = []
+        if len(payloads) == 3:
+            validate_elf(payloads[2])
+            (work / 'pf_aa').write_bytes(payloads[2])
+            helper_files.append(work / 'pf_aa')
         for name, data in plugin.items():
             (work / 'release' / name).write_bytes(data)
-        metadata = {'schema': 1, 'downloaded_at': datetime.now(timezone.utc).isoformat(),
+        metadata = {'schema': 2 if helper_files else 1, 'downloaded_at': datetime.now(timezone.utc).isoformat(),
                     'release': {k: release.get(k) for k in
                     ('id', 'name', 'tag_name', 'published_at', 'html_url', 'prerelease')},
                     'assets': [{k: a[k] for k in ('name', 'digest', 'size')} for a in assets],
                     'files': {file.relative_to(work).as_posix(): hashlib.sha256(file.read_bytes()).hexdigest()
-                              for file in [work / 'nbt-aad', *sorted((work / 'release').iterdir())]}}
+                              for file in [work / 'nbt-aad', *helper_files, *sorted((work / 'release').iterdir())]}}
         (work / 'package.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
         # Content-addressed packages survive moving upstream tags and interrupted downloads.
-        identifier = hashlib.sha256((assets[0]['digest'] + assets[1]['digest']).encode()).hexdigest()[:24]
+        identifier = hashlib.sha256(''.join(a['digest'] for a in assets).encode()).hexdigest()[:24]
         destination = cache / identifier
         if destination.exists():
             load_package(destination)
