@@ -1,7 +1,7 @@
 {
   "application": "NBT-AAD PC",
   "platform": "Windows",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "method": "Pillow ImageGrab single-window capture of the running Tk app",
   "head_unit_connected": false,
   "packages": [
