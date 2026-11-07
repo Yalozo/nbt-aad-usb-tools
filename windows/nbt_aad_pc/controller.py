@@ -5,7 +5,7 @@ import re
 import shlex
 import uuid
 from .releases import PackageError
-from .ssh import RemoteError, RemoteExitError, Session
+from .ssh import RemoteError, RemoteExitError, Session, on_omap
 from .installed import installed_versions
 
 
@@ -23,12 +23,6 @@ class Connection:
             raise ValueError('Введите пароль root.')
 
 
-def remote_path(node, local):
-    if node == 'hu-jacinto':
-        return '/net/hu-omap' + local
-    return local
-
-
 def detect(session):
     output = session.run('uname -s; uname -n', stream=False).decode().splitlines()
     if len(output) != 2 or output[0] != 'QNX':
@@ -36,8 +30,7 @@ def detect(session):
     node = output[1].split('.')[0]
     if node not in ('hu-omap', 'hu-jacinto'):
         raise RemoteError('Неизвестный узел QNX: ' + output[1])
-    base = remote_path(node, '')
-    session.run('test -d ' + shlex.quote(base + '/fs/sda0/opt/hmi/ID5'), stream=False)
+    session.run(on_omap(node, 'test -d /fs/sda0/opt/hmi/ID5'), stream=False)
     credentials = session.run(on_omap(node, 'echo NBT_AAD_SHELL_PID=$$; pidin -p $$ -F "%a %W"'),
                               stream=False).decode().splitlines()
     marker = re.fullmatch(r'NBT_AAD_SHELL_PID=([0-9]+)', credentials[0]) if credentials else None
@@ -47,12 +40,6 @@ def detect(session):
     if not rows or any(len(row) != 2 or row[1] != '0' for row in rows):
         raise RemoteError('Root-доступ на hu-omap не подтверждён: эффективный UID должен быть 0.')
     return node
-
-
-def on_omap(node, command):
-    if node == 'hu-jacinto':
-        return 'on -f /net/hu-omap /bin/sh -c ' + shlex.quote(command)
-    return command
 
 
 def restart(session, node, files_processed=False):
@@ -112,6 +99,7 @@ class Installer:
                                        self.state / 'known_hosts', self.confirm, self.log)
         stage, node = None, None
         completed = False
+        operation_started = False
         try:
             node = detect(session)
             self.log('Проверка ГУ пройдена: ' + node)
@@ -124,22 +112,29 @@ class Installer:
                 status = session.run(command, data=script).decode('utf-8', errors='replace')
                 versions = installed_versions(session, node, self.state / 'packages', self.log)
                 return versions + '\n\n' + status
-            stage = '/var/opt/nbt-aad-pc-' + uuid.uuid4().hex
-            target = remote_path(node, stage)
-            session.run('umask 077; mkdir ' + shlex.quote(target) +
-                        ' && mkdir ' + shlex.quote(target + '/release'), stream=False)
+            candidate = '/var/opt/nbt-aad-pc-' + uuid.uuid4().hex
+            try:
+                session.run(on_omap(node, 'umask 077; mkdir ' + shlex.quote(candidate)), stream=False)
+            except RemoteExitError as exc:
+                raise RemoteError('Не удалось создать временный каталог в /var/opt на hu-omap. '
+                                  'Установка и удаление ещё не запускались. ' + str(exc)) from exc
+            stage = candidate
+            if action == 'install':
+                session.run(on_omap(node, 'umask 077; mkdir ' + shlex.quote(stage + '/release')),
+                            stream=False)
             for index, (name, data) in enumerate(files.items(), 1):
                 self.log('Передача и проверка %s (%s/%s)' % (name, index, len(files)))
-                session.upload(target + '/' + name, data)
-            command = '/bin/sh ' + shlex.quote(target + '/nbt-aad.sh') + ' ' + action + ' --source ' + shlex.quote(stage)
+                session.upload(stage + '/' + name, data, node=node)
+            command = '/bin/sh ' + shlex.quote(stage + '/nbt-aad.sh') + ' ' + action + ' --source ' + shlex.quote(stage)
             if action == 'uninstall':
                 command += ' --keep-config' if removal == 'keep' else ' --purge'
             self.log('Проверка установки без изменений…')
-            validation = session.run(command + ' --dry-run')
+            validation = session.run(on_omap(node, command + ' --dry-run'))
             if b'DRY RUN: validation passed' not in validation and b'Already uninstalled.' not in validation:
                 raise RemoteError('Установщик не подтвердил готовность к операции.')
             self.log('Выполнение операции… Не отключайте питание и ENET.')
-            result = session.run(command)
+            operation_started = True
+            result = session.run(on_omap(node, command))
             marker = ('SUCCESS: ' + action + ' completed.').encode()
             if marker not in result and not (action == 'uninstall' and b'Already uninstalled.' in result):
                 raise RemoteError('Нет подтверждения успешной операции. Проверьте журнал.')
@@ -171,17 +166,17 @@ class Installer:
                 message += '\nПерезагрузка отключена в настройках.'
             return message
         finally:
-            if stage and not completed:
-                if action == 'uninstall' and removal == 'purge':
-                    self.log('Полная очистка не подтверждена. Часть файлов и копий могла быть уже удалена. '
-                             'Временный путь этой операции: ' + stage + '. Проверьте журнал перед повтором.')
-                else:
-                    self.log('При незавершённой операции временные файлы оставлены в ' + stage +
-                             '. Они сохранены для диагностики; резервные копии не удаляются.')
+            if not completed and action in ('install', 'uninstall'):
+                if not operation_started:
+                    self.log('Сбой до запуска установки или удаления.')
+                elif action == 'uninstall' and removal == 'purge':
+                    self.log('Полная очистка не подтверждена. Часть файлов и копий могла быть уже удалена.')
+                if stage:
+                    self.log('Временный каталог этой операции на hu-omap: ' + stage)
             session.close()
 
     @staticmethod
     def cleanup(session, node, stage):
         if not re.fullmatch(r'/var/opt/nbt-aad-pc-[0-9a-f]{32}', stage):
             raise RemoteError('Недопустимый путь очистки.')
-        session.run('rm -rf ' + shlex.quote(remote_path(node, stage)), stream=False)
+        session.run(on_omap(node, 'rm -rf ' + shlex.quote(stage)), stream=False)
