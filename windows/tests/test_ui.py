@@ -304,7 +304,7 @@ class NativeUITest(unittest.TestCase):
             finally:
                 app.close()
 
-    def test_tooltip_opens_on_focus_and_closes_when_operation_starts(self):
+    def test_tooltip_is_bound_to_focus_and_closes_when_operation_starts(self):
         import tkinter as tk
         from nbt_aad_pc.ui import App
         with tempfile.TemporaryDirectory() as directory:
@@ -312,13 +312,21 @@ class NativeUITest(unittest.TestCase):
             app = App(root, state=directory)
             try:
                 tooltip = next(t for t in app.tooltips if t.widget is app.purge_button)
-                tooltip.delay = 0
-                app.purge_button.event_generate('<FocusIn>')
-                root.update()
-                self.assertIsNotNone(tooltip.window)
-                self.assertTrue(tooltip.window.winfo_exists())
+                self.assertTrue(app.purge_button.bind('<FocusIn>'))
+                tooltip.schedule()
+                self.assertIsNotNone(tooltip.pending)
+                tooltip.widget.after_cancel(tooltip.pending)
+                # A native popup on a withdrawn root can block a headless macOS runner.
+                with patch('nbt_aad_pc.tooltips.tk.Toplevel') as toplevel, \
+                     patch('nbt_aad_pc.tooltips.tk.Label'):
+                    popup = toplevel.return_value
+                    popup.winfo_reqwidth.return_value = 100
+                    popup.winfo_reqheight.return_value = 40
+                    tooltip.show()
+                    popup.deiconify.assert_called_once_with()
                 app.busy = True
                 app.update_controls()
+                popup.destroy.assert_called_once_with()
                 self.assertIsNone(tooltip.window)
                 tooltip.schedule()
                 self.assertIsNone(tooltip.pending)
