@@ -1,5 +1,6 @@
 """Real loopback SSH: RSA/SHA1, binary stdin and host-key verification."""
 from pathlib import Path
+import shlex
 import socket
 import tempfile
 import threading
@@ -55,6 +56,10 @@ class LoopbackServer:
                     raise RuntimeError('No exec request')
                 command = handler.command
                 handler.ready.clear()
+                omap_prefix = 'on -f /net/hu-omap /bin/sh -c '
+                if command.startswith(omap_prefix):
+                    local, = shlex.split(command[len(omap_prefix):])
+                    command = local.replace('/var/opt/nbt-aad-pc-test/', 'omap:')
                 data = bytearray()
                 while True:
                     chunk = channel.recv(65536)
@@ -103,6 +108,8 @@ class SSHTest(unittest.TestCase):
         data = bytes(range(256)) * 4000
         session.upload('/dev/shmem/test', data)
         self.assertEqual(self.server.files['/dev/shmem/test'], data)
+        session.upload('/var/opt/nbt-aad-pc-test/binary', data, node='hu-jacinto')
+        self.assertEqual(self.server.files['omap:binary'], data)
         self.assertEqual(session.run('echo-test'), b'output\n')
         self.assertIn('warning', self.logs)
         self.assertTrue(self.known.exists())
