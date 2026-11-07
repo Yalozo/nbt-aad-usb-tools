@@ -18,7 +18,14 @@ else
     "$BUILD_PYTHON" -m pip install --only-binary=cryptography -r requirements-build.txt
 fi
 cd "$REPO_DIR/windows"
-"$BUILD_PYTHON" -m unittest discover -s tests -v
+# Report the stack if a native Tk test blocks on a headless runner.
+"$BUILD_PYTHON" - <<'PYTHON'
+import faulthandler
+import unittest
+
+faulthandler.dump_traceback_later(90, exit=True)
+unittest.main(module=None, argv=['unittest', 'discover', '-s', 'tests', '-v'])
+PYTHON
 cd "$MAC_DIR"
 "$BUILD_PYTHON" -m PyInstaller --noconfirm --clean --distpath dist --workpath build nbt-aad.spec
 "$BUILD_PYTHON" check_bundle.py dist/NBT-AAD-PC.app
