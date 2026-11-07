@@ -244,8 +244,7 @@ class App:
                         self.status.set('Операция остановлена — смотрите журнал')
                         self.write('ОШИБКА: ' + data)
                         detail = data.replace(self.secret, '[пароль скрыт]') if self.secret else data
-                        messagebox.showerror('Операция не завершена', detail +
-                            '\n\nЕсли SSH закрыт, откройте его бесплатным Bavarian SSH Client или другим решением. Не повторяйте установку при незавершённом откате.', parent=self.root)
+                        messagebox.showerror('Операция не завершена', detail, parent=self.root)
                     else:
                         self.status.set('Готово')
                         if data:
