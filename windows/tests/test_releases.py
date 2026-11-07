@@ -21,7 +21,8 @@ def zip_bytes(items):
     out = io.BytesIO()
     with zipfile.ZipFile(out, 'w') as z:
         for name, data in items.items():
-            z.writestr(name, data)
+            # Use ZipInfo's fixed timestamp for byte-for-byte fixture comparisons.
+            z.writestr(zipfile.ZipInfo(name), data)
     return out.getvalue()
 
 
