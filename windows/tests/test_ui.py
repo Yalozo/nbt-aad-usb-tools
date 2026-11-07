@@ -9,6 +9,78 @@ from unittest.mock import patch
 @unittest.skipUnless(sys.platform in ('win32', 'darwin') and importlib.util.find_spec('_tkinter'),
                      'Native UI tests require a Tk-enabled Python on Windows/macOS')
 class NativeUITest(unittest.TestCase):
+    def test_language_switch_persists_and_footer_fits_at_minimum_height(self):
+        import tkinter as tk
+        from nbt_aad_pc.ui import App
+        with tempfile.TemporaryDirectory() as directory:
+            root = tk.Tk()
+            app = App(root, state=directory)
+            def resize(width, height):
+                root.geometry(f'{width}x{height}')
+                root.after(120, root.quit)
+                root.mainloop()
+
+            try:
+                for choice, button, ready in (
+                        ('Русский', 'Отправить лог', 'Готово к работе'),
+                        ('English', 'Send Log', 'Ready to work')):
+                    with self.subTest(language=choice):
+                        app.language_choice.set(choice)
+                        app.change_language()
+                        width, height = root.minsize()
+                        resize(width, height + 90)
+                        larger_log = app.output.winfo_height()
+                        resize(width, height)
+                        self.assertLess(app.output.winfo_height(), larger_log)
+                        for widget in (app.log_path_entry, app.send_log_button):
+                            self.assertTrue(widget.winfo_ismapped())
+                            self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(),
+                                                 root.winfo_rooty() + root.winfo_height())
+                        self.assertEqual(app.send_log_button.winfo_height(),
+                                         app.send_log_button.winfo_reqheight())
+                        self.assertEqual(app.send_log_button.cget('text'), button)
+                        self.assertEqual(app.status.get(), ready)
+                        self.assertEqual(app.log_path_entry.get(), str(app.logfile))
+                self.assertEqual(app.action_buttons[1].cget('text'), 'Install / Update')
+                self.assertEqual(app.release.get(0), 'Latest matching release (automatic)')
+                self.assertTrue(any(t.text.startswith('Prepares an email draft') for t in app.tooltips))
+                self.assertEqual(json.loads((Path(directory) / 'settings.json').read_text())['language'], 'en')
+            finally:
+                app.close()
+            root = tk.Tk()
+            root.withdraw()
+            app = App(root, state=directory)
+            try:
+                self.assertEqual(app.language_choice.get(), 'English')
+                self.assertEqual(app.send_log_button.cget('text'), 'Send Log')
+            finally:
+                app.close()
+
+    def test_english_error_uses_selected_language_in_worker(self):
+        import tkinter as tk
+        from nbt_aad_pc.controller import Connection
+        from nbt_aad_pc.ui import App
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / 'settings.json').write_text('{"language": "en"}')
+            root = tk.Tk()
+            root.withdraw()
+            app = App(root, state=directory)
+            try:
+                with patch('nbt_aad_pc.ui.messagebox.showerror') as showerror:
+                    app.start('Работа с головным устройством…', Connection().validate)
+                    self.assertEqual(str(app.language_choice.cget('state')), 'disabled')
+                    error = app.events.get(timeout=5)
+                    app.events.put(error)
+                    root.after_cancel(app.poll_after)
+                    app.poll()
+                self.assertEqual(str(app.language_choice.cget('state')), 'readonly')
+                self.assertEqual(app.status.get(), 'Operation stopped. See the log.')
+                self.assertEqual(showerror.call_args.args[0], 'Operation incomplete')
+                self.assertIn('Enter the root password.', showerror.call_args.args[1])
+            finally:
+                app.busy = False
+                app.close()
+
     def test_all_head_unit_actions_automatically_verify_ssh_and_use_found_host(self):
         import tkinter as tk
         from nbt_aad_pc.ui import App

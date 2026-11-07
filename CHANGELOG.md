@@ -1,5 +1,10 @@
 # Changes
 
+## Windows/macOS app 0.1.11
+
+- Keep the log path and Send Log button visible when the window shrinks.
+- Add a persistent Russian/English switch and paired documentation for Windows, macOS, the USB installer, and recovery.
+
 ## USB 0.4.2 / Windows/macOS app 0.1.10
 
 - Check SSH before each head-unit action and open it automatically when needed. Retry a transient network handshake once before sending any diagnostic request.

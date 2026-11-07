@@ -31,7 +31,7 @@ jobs:
       - name: Package Windows download
         shell: powershell
         run: |
-          Copy-Item windows\README.md windows\dist\README.md
+          Copy-Item windows\README.md, windows\README.en.md windows\dist
           Copy-Item LICENSE windows\dist\LICENSE.txt
           Push-Location windows
           python collect_licenses.py

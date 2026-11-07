@@ -6,6 +6,7 @@ import shlex
 import socket
 import time
 import paramiko
+from .i18n import tr
 
 
 class RemoteError(Exception):
@@ -15,12 +16,12 @@ class RemoteError(Exception):
 class RemoteExitError(RemoteError):
     def __init__(self, code, detail):
         self.code = code
-        super().__init__('Команда ГУ не завершилась успешно (код %s). %s' % (code, detail))
+        super().__init__(tr('Команда ГУ не завершилась успешно (код %s). %s') % (code, detail))
 
 
 def with_enet_hint(message):
-    return (message + '\n\nПроверьте подключение кабеля ENET к автомобилю '
-            'и убедитесь, что зажигание включено.')
+    return (message + tr('\n\nПроверьте подключение кабеля ENET к автомобилю '
+            'и убедитесь, что зажигание включено.'))
 
 
 def on_omap(node, command):
@@ -36,7 +37,7 @@ class TrustPolicy(paramiko.MissingHostKeyPolicy):
     def missing_host_key(self, client, hostname, key):
         fingerprint = 'SHA256:' + base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode().rstrip('=')
         if not self.confirm(hostname, fingerprint):
-            raise RemoteError('Подключение к неизвестному ГУ отменено.')
+            raise RemoteError(tr('Подключение к неизвестному ГУ отменено.'))
         client.get_host_keys().add(hostname, key.get_name(), key)
         self.known_hosts.parent.mkdir(parents=True, exist_ok=True)
         client.save_host_keys(str(self.known_hosts))
@@ -67,7 +68,7 @@ class Session:
             if bound_socket is not None:
                 bound_socket.close()
             if isinstance(exc, (OSError, EOFError)):
-                raise RemoteError(with_enet_hint('Не удалось подключиться к ГУ по SSH: ' + str(exc))) from exc
+                raise RemoteError(with_enet_hint(tr('Не удалось подключиться к ГУ по SSH: ') + str(exc))) from exc
             raise
 
     def close(self):
@@ -88,7 +89,7 @@ class Session:
             while True:
                 if time.monotonic() > deadline:
                     raise RemoteError(with_enet_hint(
-                        'ГУ не завершило команду за отведённое время. Состояние нужно проверить.'))
+                        tr('ГУ не завершило команду за отведённое время. Состояние нужно проверить.')))
                 received = False
                 for ready, read, target in ((channel.recv_ready, channel.recv, output),
                                              (channel.recv_stderr_ready, channel.recv_stderr, error)):
@@ -97,7 +98,7 @@ class Session:
                         target.extend(part)
                         received = True
                         if len(output) + len(error) > max_output:
-                            raise RemoteError('Слишком большой ответ ГУ.')
+                            raise RemoteError(tr('Слишком большой ответ ГУ.'))
                         if stream:
                             pending.extend(part)
                             while b'\n' in pending:
@@ -109,7 +110,7 @@ class Session:
                 if not received:
                     if channel.closed:
                         raise RemoteError(with_enet_hint(
-                            'Соединение закрылось до подтверждения выполнения команды.'))
+                            tr('Соединение закрылось до подтверждения выполнения команды.')))
                     time.sleep(.02)
             if stream and pending:
                 self.log(pending.decode('utf-8', errors='replace'))
@@ -117,14 +118,14 @@ class Session:
             if code != 0:
                 detail = error.decode('utf-8', errors='replace').strip()[-1500:]
                 if code < 0:
-                    raise RemoteError(with_enet_hint('Соединение закрылось без кода завершения. ' + detail))
+                    raise RemoteError(with_enet_hint(tr('Соединение закрылось без кода завершения. ') + detail))
                 raise RemoteExitError(code, detail)
             return bytes(output)
         except (OSError, EOFError) as exc:
-            raise RemoteError(with_enet_hint('Связь с ГУ по SSH прервана: ' + str(exc))) from exc
+            raise RemoteError(with_enet_hint(tr('Связь с ГУ по SSH прервана: ') + str(exc))) from exc
         except paramiko.SSHException as exc:
             if not transport.is_active():
-                raise RemoteError(with_enet_hint('Связь с ГУ по SSH прервана: ' + str(exc))) from exc
+                raise RemoteError(with_enet_hint(tr('Связь с ГУ по SSH прервана: ') + str(exc))) from exc
             raise
         finally:
             if channel is not None:
@@ -135,4 +136,4 @@ class Session:
         self.run(on_omap(node, 'umask 077; cat > ' + quoted), data=data, stream=False)
         actual = self.run(on_omap(node, 'cat ' + quoted), stream=False, max_output=len(data)+4096)
         if hashlib.sha256(actual).digest() != hashlib.sha256(data).digest():
-            raise RemoteError('Не совпала контрольная сумма загруженного файла.')
+            raise RemoteError(tr('Не совпала контрольная сумма загруженного файла.'))

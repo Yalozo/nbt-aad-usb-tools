@@ -17,6 +17,7 @@ from . import __version__
 from .controller import Connection, Installer
 from .relay import RelaySettings
 from .unlocker import open_ssh
+from .i18n import LANGUAGES, tr, using_language
 from .paths import state_directory
 from .tooltips import Tooltip
 from .releases import (list_releases, download_package, local_package,
@@ -28,7 +29,7 @@ UPSTREAM = 'https://github.com/Sq00ky/Supra-iDrive6-Android-Auto'
 DRIVE2 = 'https://www.drive2.ru/l/747198416496362487/'
 SUPPORT_EMAIL = 'avyalozo@gmail.com'
 CAR_PREPARATION_NOTE = 'Подключите кабель ENET к автомобилю и включите зажигание.'
-SSH_INTERNET_NOTE = 'Интернет нужен для открытия SSH на ГУ, если он ещё закрыт.'
+SSH_INTERNET_NOTE = 'Стабильный интернет нужен для открытия SSH на ГУ, если он ещё закрыт.'
 DOWNLOADED_COLOR = '#14623b'
 ETHERNET_HELP = ('Поле необязательное. Оставьте пустым, если ГУ находится автоматически. '
                  'Если на ПК несколько адаптеров и поиск идёт не через ENET, откройте ipconfig '
@@ -85,12 +86,16 @@ class App:
             pass
         self.config = config if isinstance(config, dict) else {}
         config = self.config
+        self.language = config.get('language')
+        if self.language not in ('ru', 'en'):
+            self.language = 'ru'
+        self.localized_widgets = []
+        self.localized_tooltips = []
         self.preferred_release = config.get('release_package',
             config.get('offline_package') if config.get('offline') else None)
         root.title('NBT-AAD PC')
         height = min(840, root.winfo_screenheight() - 80)
         root.geometry('1000x' + str(height))
-        root.minsize(840, min(690, height))
         root.configure(bg='#f3f6f7')
         font_family = 'Helvetica Neue' if sys.platform == 'darwin' else 'Segoe UI'
         mono_family = 'Menlo' if sys.platform == 'darwin' else 'Consolas'
@@ -102,16 +107,29 @@ class App:
         style.configure('TButton', font=(font_family, 10), padding=(12, 10))
         style.configure('Title.TLabel', font=(font_family, 16, 'bold'), foreground='#142d34')
         style.configure('Accent.TButton', background='#008d91', foreground='white')
-        frame = ttk.Frame(root, padding=(26, 16, 26, 18))
-        frame.pack(fill='both', expand=True)
-        ttk.Label(frame, text='Беспроводной Android Auto', style='Title.TLabel').pack(anchor='w')
-        ttk.Label(frame, text='BMW и MINI с NBT Evo · бесплатный установщик ' + __version__).pack(anchor='w', pady=(2, 8))
-        note = CAR_PREPARATION_NOTE + '\n' + SSH_INTERNET_NOTE + '\nCarPlay должен быть активирован.'
-        ttk.Label(frame, text=note, foreground='#526970').pack(anchor='w')
+        self.layout = ttk.Frame(root, padding=(26, 16, 26, 18))
+        self.layout.pack(fill='both', expand=True)
+        self.layout.columnconfigure(0, weight=1)
+        self.layout.rowconfigure(1, weight=1)
+        frame = ttk.Frame(self.layout)
+        frame.grid(row=0, column=0, sticky='ew')
+        header = ttk.Frame(frame)
+        header.pack(fill='x')
+        self.localized(ttk.Label(header, style='Title.TLabel'), 'Беспроводной Android Auto').pack(side='left')
+        self.language_choice = ttk.Combobox(header, values=tuple(LANGUAGES.values()),
+                                            width=9, state='readonly')
+        self.language_choice.set(LANGUAGES[self.language])
+        self.language_choice.pack(side='right')
+        self.language_choice.bind('<<ComboboxSelected>>', self.change_language)
+        ttk.Label(header, text='Язык / Language').pack(side='right', padx=(0, 6))
+        self.localized(ttk.Label(frame), 'BMW и MINI с NBT Evo · бесплатный установщик ',
+                       __version__).pack(anchor='w', pady=(2, 8))
+        self.localized(ttk.Label(frame, foreground='#526970'), CAR_PREPARATION_NOTE, '\n',
+                       SSH_INTERNET_NOTE, '\nCarPlay должен быть активирован.').pack(anchor='w')
         links = ttk.Frame(frame)
         links.pack(fill='x', pady=(6, 10))
         for title, url in [('Исходный проект NBT-AAD', UPSTREAM), ('Мой бортжурнал на Drive2', DRIVE2)]:
-            button = ttk.Label(links, text=title, foreground='#008d91', cursor='hand2')
+            button = self.localized(ttk.Label(links, foreground='#008d91', cursor='hand2'), title)
             button.pack(side='left', padx=(0, 25))
             button.bind('<Button-1>', lambda event, url=url: webbrowser.open(url))
         connection = ttk.Frame(frame)
@@ -124,7 +142,7 @@ class App:
                 ('Порт SSH', self.port, 8, False), ('Пароль root', self.password, 22, True)]):
             cell = ttk.Frame(connection)
             cell.grid(row=0, column=column, sticky='w', padx=(0, 18))
-            ttk.Label(cell, text=label).pack(anchor='w', pady=(0, 5))
+            self.localized(ttk.Label(cell), label).pack(anchor='w', pady=(0, 5))
             entry = ttk.Entry(cell, textvariable=variable, width=width, show='•' if secret else '')
             entry.pack(anchor='w')
             self.widgets.append(entry)
@@ -134,18 +152,18 @@ class App:
         self.source_ip = tk.StringVar(value=config.get('source_ip', ''))
         for label, variable in [('IP диагностики (пусто = поиск)', self.gateway),
                                 ('IPv4 Ethernet ПК (необязательно)', self.source_ip)]:
-            ttk.Label(relay_row, text=label).pack(side='left', padx=(0, 6))
+            self.localized(ttk.Label(relay_row), label).pack(side='left', padx=(0, 6))
             entry = ttk.Entry(relay_row, textvariable=variable, width=18)
             entry.pack(side='left', padx=(0, 16))
             self.widgets.append(entry)
             if variable is self.source_ip:
-                self.tooltips.append(Tooltip(entry, ETHERNET_HELP))
+                self.add_tooltip(entry, ETHERNET_HELP)
         self.preview = tk.BooleanVar(value=False)
         self.reboot = tk.BooleanVar(value=True)
         release_row = ttk.Frame(frame)
         release_row.pack(fill='x', pady=(10, 13))
         release_row.columnconfigure(0, weight=1)
-        ttk.Label(frame, text='Релиз NBT-AAD').pack(before=release_row, anchor='w', pady=(12, 0))
+        self.localized(ttk.Label(frame), 'Релиз NBT-AAD').pack(before=release_row, anchor='w', pady=(12, 0))
         self.release = tk.Listbox(release_row, height=4, width=38, selectmode='browse',
                                   exportselection=False, font=(font_family, 10),
                                   background='white', foreground='#142d34',
@@ -160,12 +178,13 @@ class App:
         self.release_refresh.grid(row=0, column=2, sticky='n', padx=(10, 0))
         self.download_button = self.add_button(release_row, 'Скачать заранее', self.prepare)
         self.download_button.grid(row=0, column=3, sticky='n', padx=(10, 0))
-        preview_check = ttk.Checkbutton(release_row, text='Показывать бета-релизы из интернета',
-                                        variable=self.preview, command=self.update_release_list)
+        preview_check = self.localized(
+            ttk.Checkbutton(release_row, variable=self.preview, command=self.update_release_list),
+            'Показывать бета-релизы из интернета')
         preview_check.grid(row=1, column=0, sticky='w', pady=(3, 0))
         self.widgets.append(preview_check)
-        self.release_hint = ttk.Label(release_row, foreground='#526970',
-            text='Выбранный релиз недоступен — обновите список или выберите другой')
+        self.release_hint = self.localized(ttk.Label(release_row, foreground='#526970'),
+            'Выбранный релиз недоступен — обновите список или выберите другой')
         actions = ttk.Frame(frame)
         actions.pack(fill='x')
         self.action_buttons = []
@@ -182,39 +201,77 @@ class App:
                 self.restart_button = button
             elif title == 'Очистить ГУ':
                 self.purge_button = button
-        reboot_check = ttk.Checkbutton(frame, text='Перезагрузить ГУ после успеха', variable=self.reboot)
+        reboot_check = self.localized(ttk.Checkbutton(frame, variable=self.reboot), 'Перезагрузить ГУ после успеха')
         reboot_check.pack(anchor='w', pady=(6, 0))
         self.widgets.append(reboot_check)
-        self.status = tk.StringVar(value='Готово к работе')
+        self.status = tk.StringVar()
+        self.set_status('Готово к работе')
         ttk.Label(frame, textvariable=self.status).pack(anchor='w', pady=(16, 5))
         self.progress = ttk.Progressbar(frame, mode='indeterminate')
         self.progress.pack(fill='x', pady=(0, 10))
-        self.output = ScrolledText(frame, height=9, font=(mono_family, 9),
+        self.output = ScrolledText(self.layout, height=3, font=(mono_family, 9),
                                   bg='#142d34', fg='#edf8f8', state='disabled', relief='flat')
-        self.output.pack(fill='both', expand=True)
-        log_row = ttk.Frame(frame)
-        log_row.pack(fill='x', pady=(8, 0))
+        self.output.grid(row=1, column=0, sticky='nsew')
+        log_row = ttk.Frame(self.layout)
+        log_row.grid(row=2, column=0, sticky='ew', pady=(8, 0))
+        log_row.columnconfigure(1, weight=1)
+        self.localized(ttk.Label(log_row, foreground='#526970'), 'Журнал: ').grid(row=0, column=0, sticky='w')
+        self.log_path = tk.StringVar(value=str(self.logfile))
+        self.log_path_entry = ttk.Entry(log_row, width=24, textvariable=self.log_path, state='readonly')
+        self.log_path_entry.grid(row=0, column=1, sticky='ew', padx=(4, 10))
         self.send_log_button = self.add_button(log_row, 'Отправить лог', self.send_log)
-        self.send_log_button.pack(side='right')
-        ttk.Label(log_row, text='Журнал: ' + str(self.logfile), foreground='#526970',
-                  wraplength=650).pack(side='left', fill='x', expand=True)
+        self.send_log_button.grid(row=0, column=2, sticky='e')
         root.protocol('WM_DELETE_WINDOW', self.close)
         self.poll_after = root.after(70, self.poll)
-        self.write('NBT-AAD PC ' + __version__ + '. Пароль не сохраняется в настройках или журнале.')
-        self.write(CAR_PREPARATION_NOTE)
-        self.write(SSH_INTERNET_NOTE)
+        self.write('NBT-AAD PC ' + __version__ + self.tr('. Пароль не сохраняется в настройках или журнале.'))
+        self.write(self.tr(CAR_PREPARATION_NOTE))
+        self.write(self.tr(SSH_INTERNET_NOTE))
         self.update_release_list()
 
+    def tr(self, message):
+        return tr(message, self.language)
+
+    def localized(self, widget, *messages):
+        self.localized_widgets.append((widget, messages))
+        widget.configure(text=''.join(map(self.tr, messages)))
+        return widget
+
+    def add_tooltip(self, widget, message):
+        tooltip = Tooltip(widget, self.tr(message))
+        self.tooltips.append(tooltip)
+        self.localized_tooltips.append((tooltip, message))
+
     def add_button(self, parent, text, command, accent=False):
-        button = ttk.Button(parent, text=text, command=command, style='Accent.TButton' if accent else 'TButton')
+        button = self.localized(
+            ttk.Button(parent, command=command, style='Accent.TButton' if accent else 'TButton'), text)
         self.widgets.append(button)
         if text in BUTTON_HELP:
-            self.tooltips.append(Tooltip(button, BUTTON_HELP[text]))
+            self.add_tooltip(button, BUTTON_HELP[text])
         return button
+
+    def set_status(self, message):
+        self.status_message = message
+        self.status.set(self.tr(message))
+
+    def update_minimum_size(self):
+        self.root.update_idletasks()
+        self.root.minsize(max(840, self.layout.winfo_reqwidth()), self.layout.winfo_reqheight())
+
+    def change_language(self, event=None):
+        if self.busy:
+            return
+        self.language = tuple(LANGUAGES)[self.language_choice.current()]
+        for widget, messages in self.localized_widgets:
+            widget.configure(text=''.join(map(self.tr, messages)))
+        for tooltip, message in self.localized_tooltips:
+            tooltip.text = self.tr(message)
+        self.set_status(self.status_message)
+        self.update_release_list()
+        self.save_preferences()
 
     def write(self, message):
         if self.secret:
-            message = message.replace(self.secret, '[пароль скрыт]')
+            message = message.replace(self.secret, self.tr('[пароль скрыт]'))
         line = datetime.now().strftime('%H:%M:%S') + '  ' + message + '\n'
         self.log_handle.write(line)
         self.output.configure(state='normal')
@@ -236,12 +293,13 @@ class App:
         if self.busy:
             return
         self.busy = True
-        self.status.set(title)
+        self.set_status(title)
         self.progress.start(15)
         self.update_controls()
         def worker():
             try:
-                self.events.put(('done', function()))
+                with using_language(self.language):
+                    self.events.put(('done', function()))
             except Exception as exc:
                 self.events.put(('error', str(exc)))
         threading.Thread(target=worker, daemon=True).start()
@@ -254,9 +312,9 @@ class App:
                     self.write(data)
                 elif kind == 'trust':
                     host, fingerprint, result, done = data
-                    result.append(messagebox.askyesno('Первое подключение к ГУ',
-                        'Адрес: ' + host + '\nКлюч SSH: ' + fingerprint +
-                        '\n\nСохранить этот ключ для вашего ГУ? При последующих подключениях он будет проверяться.', parent=self.root))
+                    result.append(messagebox.askyesno(self.tr('Первое подключение к ГУ'),
+                        self.tr('Адрес: ') + host + self.tr('\nКлюч SSH: ') + fingerprint +
+                        self.tr('\n\nСохранить этот ключ для вашего ГУ? При последующих подключениях он будет проверяться.'), parent=self.root))
                     done.set()
                 elif kind == 'releases':
                     self.releases = data
@@ -272,14 +330,14 @@ class App:
                     self.progress.stop()
                     if kind == 'error':
                         self.update_release_list()
-                        self.status.set('Операция остановлена — смотрите журнал')
-                        self.write('ОШИБКА: ' + data)
-                        detail = data.replace(self.secret, '[пароль скрыт]') if self.secret else data
-                        messagebox.showerror('Операция не завершена', detail +
-                            '\n\nПри ошибке открытия SSH автоматического повтора нет. Не повторяйте установку при незавершённом откате.', parent=self.root)
+                        self.set_status('Операция остановлена — смотрите журнал')
+                        self.write(self.tr('ОШИБКА: ') + data)
+                        detail = data.replace(self.secret, self.tr('[пароль скрыт]')) if self.secret else data
+                        messagebox.showerror(self.tr('Операция не завершена'), detail +
+                            self.tr('\n\nПри ошибке открытия SSH автоматического повтора нет. Не повторяйте установку при незавершённом откате.'), parent=self.root)
                     else:
                         self.update_controls()
-                        self.status.set('Готово')
+                        self.set_status('Готово')
                         if data:
                             self.write(str(data))
         except queue.Empty:
@@ -287,9 +345,14 @@ class App:
         self.poll_after = self.root.after(70, self.poll)
 
     def snapshot(self):
-        connection = Connection(self.host.get().strip(), int(self.port.get()), self.password.get(),
+        try:
+            port = int(self.port.get())
+        except ValueError:
+            raise ValueError(self.tr('Неверный порт SSH.')) from None
+        connection = Connection(self.host.get().strip(), port, self.password.get(),
                                 self.source_ip.get().strip())
-        connection.validate()
+        with using_language(self.language):
+            connection.validate()
         self.secret = connection.password
         # Password deliberately excluded.
         self.config.update(host=connection.host, port=connection.port)
@@ -299,7 +362,7 @@ class App:
     def selected_release(self):
         selection = self.release.curselection()
         if not selection:
-            raise PackageError('Выберите релиз из списка.')
+            raise PackageError(self.tr('Выберите релиз из списка.'))
         return self.release_choices[selection[0]]
 
     def release_selected(self, event=None):
@@ -307,6 +370,7 @@ class App:
             return
         self.preferred_release, _ = self.selected_release()
         self.release_hint.grid_remove()
+        self.update_minimum_size()
         self.save_preferences()
 
     def save_preferences(self):
@@ -314,12 +378,14 @@ class App:
                   'port': self.config.get('port', 22),
                   'release_package': self.preferred_release,
                   'gateway': self.gateway.get().strip(),
-                  'source_ip': self.source_ip.get().strip()}
+                  'source_ip': self.source_ip.get().strip(),
+                  'language': self.language}
         (self.state / 'settings.json').write_text(json.dumps(config), encoding='utf-8')
 
     def update_controls(self):
         for tooltip in self.tooltips:
             tooltip.hide()
+        self.language_choice.configure(state='disabled' if self.busy else 'readonly')
         for widget in self.widgets:
             widget.configure(state='disabled' if self.busy else 'normal')
 
@@ -329,18 +395,18 @@ class App:
         if identifier is None:
             releases = list_releases(include_preview)
             if not releases:
-                raise ValueError('Подходящих релизов не найдено. Проверьте настройки бета-релизов.')
+                raise ValueError(self.tr('Подходящих релизов не найдено. Проверьте настройки бета-релизов.'))
             selected = releases[0]
             identifier = package_identifier(select_assets(selected))
         try:
             package = local_package(cache, identifier)
         except CACHE_ERRORS:
             if selected is None:
-                raise PackageError('Скачанный комплект недоступен. Обновите список релизов.') from None
+                raise PackageError(self.tr('Скачанный комплект недоступен. Обновите список релизов.')) from None
         else:
-            self.log('Сохранённый комплект: ' + package.label)
+            self.log(self.tr('Сохранённый комплект: ') + package.label)
             return package
-        self.log('Выбран релиз: ' + (selected.get('name') or selected['tag_name']))
+        self.log(self.tr('Выбран релиз: ') + (selected.get('name') or selected['tag_name']))
         package = download_package(selected, cache, self.log)
         self.events.put(('package_downloaded', package.path.name))
         return package
@@ -350,20 +416,21 @@ class App:
             return
         removal = 'purge' if action == 'purge' else 'keep'
         if action == 'purge':
-            if not messagebox.askyesno('Полное удаление NBT-AAD',
-                'Будут безвозвратно удалены программа и плагин NBT-AAD, настройки /opt/aa и /var/opt/aa, '
+            if not messagebox.askyesno(self.tr('Полное удаление NBT-AAD'),
+                self.tr('Будут безвозвратно удалены программа и плагин NBT-AAD, настройки /opt/aa и /var/opt/aa, '
                 'все резервные копии нашего установщика, его временные загрузки и известные файлы NBT-AAD в RAM.\n\n'
                 'Откат из этих резервных копий станет невозможен. Общие кэши HMI, системные журналы, '
                 'активация SSH, CarPlay и сопряжения телефона сохраняются. Файлы на ПК и флешке сохраняются.\n\n'
-                'Выполнить полное удаление?', parent=self.root):
+                'Выполнить полное удаление?'), parent=self.root):
                 return
         try:
             connection = self.snapshot()
             settings = RelaySettings(self.gateway.get().strip(), connection.source_ip)
-            settings.validate()
+            with using_language(self.language):
+                settings.validate()
             selected = self.selected_release() if action == 'install' else None
         except (ValueError, OSError, PackageError) as exc:
-            messagebox.showerror('Параметры подключения', str(exc), parent=self.root)
+            messagebox.showerror(self.tr('Параметры подключения'), str(exc), parent=self.root)
             return
         preview, reboot = self.preview.get(), self.reboot.get()
         def work():
@@ -379,23 +446,24 @@ class App:
         try:
             selected = self.selected_release()
         except PackageError as exc:
-            messagebox.showerror('Выбор релиза', str(exc), parent=self.root)
+            messagebox.showerror(self.tr('Выбор релиза'), str(exc), parent=self.root)
             return
         preview = self.preview.get()
         self.start('Скачивание комплекта на ноутбук…',
-                   lambda: 'Комплект готов: ' + self.get_package(preview, selected).label)
+                   lambda: self.tr('Комплект готов: ') + self.get_package(preview, selected).label)
 
     def refresh(self):
         include_preview = self.preview.get()
         def work():
             releases = list_releases(include_preview=True)
             self.events.put(('releases', releases))
-            return 'Найдено релизов: ' + str(sum(include_preview or not is_preview(r) for r in releases))
+            return self.tr('Найдено релизов: ') + str(sum(include_preview or not is_preview(r) for r in releases))
         self.start('Проверка релизов GitHub…', work)
 
     def update_release_list(self):
-        cached = {p.path.name: p.metadata['release']
-                  for p in list_local_packages(self.state / 'packages', self.log)}
+        with using_language(self.language):
+            cached = {p.path.name: p.metadata['release']
+                      for p in list_local_packages(self.state / 'packages', self.log)}
         online = {}
         for release in self.releases:
             if self.preview.get() or not is_preview(release):
@@ -406,7 +474,7 @@ class App:
         labels = []
         for key in identifiers:
             release = releases[key]
-            label = ('Скачан · ' if key in cached else '') + ('БЕТА · ' if is_preview(release) else '')
+            label = (self.tr('Скачан · ') if key in cached else '') + (self.tr('БЕТА · ') if is_preview(release) else '')
             labels.append(label + (release.get('name') or release['tag_name']) +
                           ' [' + release['tag_name'] + '] · ' + (release.get('published_at') or '')[:10])
         counts = Counter(labels)
@@ -415,7 +483,7 @@ class App:
         self.release_choices = [(None, None)] + [(key, online.get(key)) for key in identifiers]
         self.release.configure(state='normal')
         self.release.delete(0, 'end')
-        self.release.insert('end', 'Последний подходящий релиз автоматически', *labels)
+        self.release.insert('end', self.tr('Последний подходящий релиз автоматически'), *labels)
         for index, key in enumerate(identifiers, 1):
             if key in cached:
                 self.release.itemconfigure(index, foreground=DOWNLOADED_COLOR,
@@ -434,21 +502,22 @@ class App:
             self.release.activate(index)
             self.release.see(index)
         self.update_controls()
+        self.update_minimum_size()
 
     def send_log(self):
         self.log_handle.flush()
         draft = self.logfile.with_suffix('.eml')
         message = EmailMessage(policy=SMTP)
         message['To'] = SUPPORT_EMAIL
-        message['Subject'] = 'Журнал NBT-AAD PC ' + __version__
+        message['Subject'] = self.tr('Журнал NBT-AAD PC ') + __version__
         message['X-Unsent'] = '1'
-        message.set_content('Здравствуйте! Прилагаю журнал установщика.\n\nОписание проблемы:\n')
+        message.set_content(self.tr('Здравствуйте! Прилагаю журнал установщика.\n\nОписание проблемы:\n'))
         try:
             message.add_attachment(self.logfile.read_bytes(), maintype='application',
                                    subtype='octet-stream', filename=self.logfile.name)
             draft.write_bytes(message.as_bytes())
         except OSError as exc:
-            messagebox.showerror('Подготовка письма', str(exc), parent=self.root)
+            messagebox.showerror(self.tr('Подготовка письма'), str(exc), parent=self.root)
             return
         try:
             if sys.platform == 'win32':
@@ -458,13 +527,13 @@ class App:
             else:
                 webbrowser.open(draft.resolve().as_uri())
         except (OSError, subprocess.CalledProcessError):
-            messagebox.showinfo('Письмо с журналом сохранено',
-                                'Откройте файл письма в почтовой программе:\n' + str(draft),
+            messagebox.showinfo(self.tr('Письмо с журналом сохранено'),
+                                self.tr('Откройте файл письма в почтовой программе:\n') + str(draft),
                                 parent=self.root)
 
     def close(self):
         if self.busy:
-            messagebox.showinfo('Операция выполняется', 'Дождитесь завершения операции перед закрытием программы.', parent=self.root)
+            messagebox.showinfo(self.tr('Операция выполняется'), self.tr('Дождитесь завершения операции перед закрытием программы.'), parent=self.root)
             return
         self.save_preferences()
         for tooltip in self.tooltips:

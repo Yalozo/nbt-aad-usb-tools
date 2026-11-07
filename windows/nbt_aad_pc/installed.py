@@ -4,6 +4,7 @@ import re
 import shlex
 from .releases import FILES, MAX_ASSET, list_local_packages, validate_elf, PackageError
 from .ssh import on_omap
+from .i18n import tr
 
 
 def embedded_version(data, plugin=False):
@@ -26,30 +27,30 @@ def installed_versions(session, node, cache, log):
         command = 'if test -f ' + quoted + ' && test ! -L ' + quoted + '; then cat ' + quoted + '; fi'
         payloads[name] = session.run(on_omap(node, command), stream=False, max_output=MAX_ASSET, timeout=120)
     lines = []
-    for name, title, plugin in [('nbt-aad', 'Установленный NBT-AAD', False),
-                                 ('release/libNbtAad.so', 'Установленный плагин', True)]:
+    for name, title, plugin in [('nbt-aad', tr('Установленный NBT-AAD'), False),
+                                 ('release/libNbtAad.so', tr('Установленный плагин'), True)]:
         data = payloads[name]
         if not data:
-            lines.append(title + ': отсутствует или недоступен.')
+            lines.append(title + tr(': отсутствует или недоступен.'))
             continue
         try:
             validate_elf(data)
         except PackageError:
-            lines.append(title + ': файл не является корректным ARM ELF32.')
+            lines.append(title + tr(': файл не является корректным ARM ELF32.'))
             continue
         version = embedded_version(data, plugin)
-        lines.append(title + ': ' + (version or 'номер сборки не найден в файле') + '.')
+        lines.append(title + ': ' + (version or tr('номер сборки не найден в файле')) + '.')
     helper = payloads['pf_aa']
     if helper:
         try:
             validate_elf(helper)
             versions = {v.decode('ascii') for v in re.findall(rb'pf_aa ([0-9]+(?:\.[0-9]+)+):', helper)}
-            version = next(iter(versions)) if len(versions) == 1 else 'версия не определена'
-            lines.append('Утилита pf_aa: ' + version + ' (наличие файла не означает применение правил).')
+            version = next(iter(versions)) if len(versions) == 1 else tr('версия не определена')
+            lines.append(tr('Утилита pf_aa: ') + version + tr(' (наличие файла не означает применение правил).'))
         except PackageError:
-            lines.append('Утилита pf_aa: файл не является корректным ARM ELF32.')
+            lines.append(tr('Утилита pf_aa: файл не является корректным ARM ELF32.'))
     else:
-        lines.append('Утилита pf_aa: отсутствует (в старых релизах её может не быть).')
+        lines.append(tr('Утилита pf_aa: отсутствует (в старых релизах её может не быть).'))
     digests = {name: hashlib.sha256(data).hexdigest() for name, data in payloads.items()}
     matches = []
     matched_count = 0
@@ -62,12 +63,12 @@ def installed_versions(session, node, cache, log):
             if len(expected) < matched_count:
                 continue
             release = package.metadata['release']
-            matches.append(package.label + ' [' + release['tag_name'] + '] (' + str(len(expected)) + ' файлов)')
+            matches.append(package.label + ' [' + release['tag_name'] + '] (' + str(len(expected)) + tr(' файлов)'))
     if matches:
-        lines.append('Комплект совпадает по SHA-256 всех ' + str(matched_count) + ' файлов: ' + '; '.join(dict.fromkeys(matches)))
+        lines.append(tr('Комплект совпадает по SHA-256 всех ') + str(matched_count) + tr(' файлов: ') + '; '.join(dict.fromkeys(matches)))
     elif any(payloads.values()):
-        lines.append('Точного совпадения со скачанными комплектами нет. '
-                     'Номера выше прочитаны из файлов; соответствие одному релизу не подтверждено.')
+        lines.append(tr('Точного совпадения со скачанными комплектами нет. '
+                     'Номера выше прочитаны из файлов; соответствие одному релизу не подтверждено.'))
     else:
-        lines.append('Нет данных для определения версии NBT-AAD.')
+        lines.append(tr('Нет данных для определения версии NBT-AAD.'))
     return '\n'.join(lines)

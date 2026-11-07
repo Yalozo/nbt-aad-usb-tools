@@ -57,20 +57,24 @@ jobs:
               release = (await github.rest.repos.createRelease({owner, repo, tag_name: tag,
                 target_commitish: sha, name: 'NBT-AAD PC ' + version + ' — Windows / macOS',
                 draft: true, prerelease: false,
-                body: 'Бесплатный GUI-установщик беспроводного Android Auto для BMW и MINI с NBT Evo.\n\n' +
-                  '- Windows x64, macOS Apple Silicon (arm64) и Intel (x86_64).\n' +
-                  '- Установка/обновление, проверка версии, обычное удаление, полная очистка NBT-AAD и перезагрузка.\n' +
-                  '- Единый список релизов с отметкой «Скачан». При установке программа использует локальный комплект или скачивает выбранный релиз.\n' +
-                  '- Подсказки к кнопкам и подготовка письма с журналом.\n' +
-                  '- Поддержка необязательного pf_aa в новых релизах: проверка, офлайн-копия и установка без автоматического изменения правил фильтра.\n\n' +
-                  'Перед обращением к ГУ приложение проверяет SSH. Если доступ закрыт, для его автоматического открытия нужен интернет.\n\n' +
+                body: '## Русский\n\n' +
+                  'Бесплатный установщик беспроводного Android Auto для BMW и MINI с NBT Evo. ' +
+                  'Выберите язык в правом верхнем углу. Путь к журналу и кнопка отправки остаются видимыми при уменьшении окна.\n\n' +
+                  'Подключите ENET и включите зажигание. Если SSH закрыт, для автоматического открытия нужен стабильный интернет.\n\n' +
+                  'Распакуйте архив и запустите EXE на Windows. На macOS распакуйте также вложенный ZIP и перенесите .app в «Программы». ' +
+                  'Инструкции по первому запуску сборки Mac с ad-hoc подписью приведены ниже.\n\n' +
                   '[Windows](https://github.com/' + owner + '/' + repo + '/blob/main/windows/README.md) · ' +
                   '[macOS](https://github.com/' + owner + '/' + repo + '/blob/main/macos/README.md) · ' +
-                  '[Мой Drive2](https://www.drive2.ru/l/747198416496362487/)\n\n' +
-                  'Распакуйте архив. На macOS также распакуйте вложенный ZIP и перенесите .app в «Программы». ' +
-                  'Сборки Mac имеют ad-hoc подпись без Developer ID/notarization; первый запуск описан в инструкции.\n\n' +
-                  'Исследовательский проект. Использование на свой страх и риск, без гарантий. ' +
-                  'Бинарники NBT-AAD скачиваются из исходного проекта и в приложение не включены.'})).data;
+                  '[Drive2](https://www.drive2.ru/l/747198416496362487/)\n\n' +
+                  '## English\n\n' +
+                  'Free wireless Android Auto installer for BMW and MINI with NBT Evo. ' +
+                  'Choose the language at the top right. The log path and Send Log stay visible when the window shrinks.\n\n' +
+                  'Connect ENET and turn on the ignition. A stable internet connection is required to open SSH automatically if it is closed.\n\n' +
+                  'Extract the archive and run the EXE on Windows. On macOS, also extract the nested ZIP and move the .app to Applications. ' +
+                  'See the first-launch instructions for the ad-hoc-signed Mac build.\n\n' +
+                  '[Windows](https://github.com/' + owner + '/' + repo + '/blob/main/windows/README.en.md) · ' +
+                  '[macOS](https://github.com/' + owner + '/' + repo + '/blob/main/macos/README.en.md)\n\n' +
+                  'NBT-AAD загружается из исходного проекта. / NBT-AAD is downloaded from the upstream project.'})).data;
             }
             const existing = (await github.rest.repos.listReleaseAssets({owner, repo, release_id: release.id})).data;
             for (const artifact of packages) {

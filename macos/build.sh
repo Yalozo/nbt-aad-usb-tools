@@ -25,7 +25,7 @@ cd "$MAC_DIR"
 codesign --verify --deep --strict --verbose=2 dist/NBT-AAD-PC.app
 # Exercise the bundled app with temporary settings, never a real HU connection.
 "$BUILD_PYTHON" -c 'import subprocess; subprocess.run(["dist/NBT-AAD-PC.app/Contents/MacOS/NBT-AAD-PC", "--self-test"], check=True, timeout=60)'
-cp README.md dist/README.md
+cp README.md README.en.md dist/
 cp "$REPO_DIR/LICENSE" dist/LICENSE.txt
 "$BUILD_PYTHON" "$REPO_DIR/windows/collect_licenses.py"
 if [ -f "$MAC_DIR/build/openssl-prefix/OPENSSL-LICENSE.txt" ]; then
@@ -37,7 +37,7 @@ PACKAGE_DIR="$MAC_DIR/package"
 mkdir -p "$PACKAGE_DIR"
 # ditto preserves framework symlinks and bundle permissions inside the ZIP.
 ditto -c -k --sequesterRsrc --keepParent dist/NBT-AAD-PC.app "$PACKAGE_DIR/NBT-AAD-PC-macOS-$MAC_ARCH.zip"
-cp dist/README.md dist/LICENSE.txt dist/THIRD-PARTY-NOTICES.txt dist/dependencies.txt "$PACKAGE_DIR/"
+cp dist/README.md dist/README.en.md dist/LICENSE.txt dist/THIRD-PARTY-NOTICES.txt dist/dependencies.txt "$PACKAGE_DIR/"
 if [ -f dist/OPENSSL-LICENSE.txt ]; then cp dist/OPENSSL-LICENSE.txt "$PACKAGE_DIR/"; fi
 cd "$PACKAGE_DIR"
 shasum -a 256 "NBT-AAD-PC-macOS-$MAC_ARCH.zip" > SHA256.txt

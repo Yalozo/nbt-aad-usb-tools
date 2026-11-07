@@ -8,6 +8,7 @@ import time
 from .controller import Connection, detect
 from .relay import RelayError, RelaySettings, activate, connect_car, discover_gateway, ipv4
 from .ssh import Session, with_enet_hint
+from .i18n import tr
 
 
 def ssh_banner(host, port=22, source_ip='', timeout=.7, connector=connect_car):
@@ -46,7 +47,7 @@ def find_ssh(preferred, gateway='', source_ip='', port=22, *, probe=ssh_banner):
         banners = pool.map(lambda host: probe(host, port, source_ip), candidates)
         found = [host for host, banner in zip(candidates, banners) if b'QNX' in banner.upper()]
     if len(found) > 1:
-        raise RelayError('Найдено несколько QNX SSH: %s. Укажите IP нужного ГУ вручную.' % ', '.join(found))
+        raise RelayError(tr('Найдено несколько QNX SSH: %s. Укажите IP нужного ГУ вручную.') % ', '.join(found))
     return found[0] if found else None
 
 
@@ -56,7 +57,7 @@ def verify(connection, state, confirm, log, session_factory=Session):
                               state / 'known_hosts', confirm, log, **kwargs)
     try:
         node = detect(session)
-        log('SSH подтверждён: QNX, %s, root на hu-omap.' % node)
+        log(tr('SSH подтверждён: QNX, %s, root на hu-omap.') % node)
     finally:
         session.close()
     return connection
@@ -69,30 +70,30 @@ def open_ssh(connection, settings, state, confirm, log, *, finder=find_ssh,
     ipv4(connection.host)
     settings.validate()
     if connection.source_ip != settings.source_ip:
-        raise ValueError('Для диагностики и SSH должен использоваться один выбранный IPv4 Ethernet ПК.')
-    log('Проверка доступа к головному устройству…')
+        raise ValueError(tr('Для диагностики и SSH должен использоваться один выбранный IPv4 Ethernet ПК.'))
+    log(tr('Проверка доступа к головному устройству…'))
     existing = finder(connection.host, '', settings.source_ip, connection.port)
     if existing:
         # Authentication, changed host-key and QNX verification errors propagate.
         # They must NEVER trigger a diagnostic unlock request.
-        log('SSH уже доступен: %s:%s. Проверка входа…' % (existing, connection.port))
+        log(tr('SSH уже доступен: %s:%s. Проверка входа…') % (existing, connection.port))
         return verifier(replace(connection, host=existing), state, confirm, log)
     if connection.port != 22:
-        raise RelayError('Для автоматического открытия SSH укажите стандартный порт 22.')
+        raise RelayError(tr('Для автоматического открытия SSH укажите стандартный порт 22.'))
     try:
         gateway = settings.gateway or gateway_finder(settings.source_ip)
     except OSError as exc:
-        raise RelayError(with_enet_hint('Не удалось выполнить поиск автомобиля по ENET: ' + str(exc))) from exc
+        raise RelayError(with_enet_hint(tr('Не удалось выполнить поиск автомобиля по ENET: ') + str(exc))) from exc
     existing = finder(connection.host, gateway, settings.source_ip, connection.port)
     if existing:
         return verifier(replace(connection, host=existing), state, confirm, log)
-    log('SSH закрыт. Открываем доступ автоматически. Сохраняйте питание ГУ, ENET и интернет.')
+    log(tr('SSH закрыт. Открываем доступ автоматически. Сохраняйте питание ГУ, ENET и интернет.'))
     activator(replace(settings, gateway=gateway), log)
     for attempt, delay in enumerate((2.5, 1.5, 1.5), 1):
         sleeper(delay)
-        log('Поиск SSH после активации: попытка %s из 3…' % attempt)
+        log(tr('Поиск SSH после активации: попытка %s из 3…') % attempt)
         host = finder(connection.host, gateway, settings.source_ip, connection.port)
         if host:
             return verifier(replace(connection, host=host), state, confirm, log)
-    raise RelayError(with_enet_hint('После открытия доступа SSH на ГУ не найден. Операция остановлена. '
-                                   'Проверьте IP и журнал.'))
+    raise RelayError(with_enet_hint(tr('После открытия доступа SSH на ГУ не найден. Операция остановлена. '
+                                   'Проверьте IP и журнал.')))

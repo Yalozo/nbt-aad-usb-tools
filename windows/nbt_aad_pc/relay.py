@@ -12,6 +12,7 @@ import certifi
 import websocket
 
 from .ssh import RemoteError, with_enet_hint
+from .i18n import tr
 
 
 RELAY_URL = 'wss://pretzel.bavarian-aa.uk:8443'
@@ -31,9 +32,9 @@ def ipv4(value, *, optional=False):
     try:
         address = ipaddress.IPv4Address(value)
     except ipaddress.AddressValueError as exc:
-        raise ValueError('Ожидался IPv4-адрес: ' + str(value)) from exc
+        raise ValueError(tr('Ожидался IPv4-адрес: ') + str(value)) from exc
     if address.is_unspecified or address.is_multicast or address.is_global:
-        raise ValueError('Нужен локальный адрес ENET, а не интернет-адрес: ' + str(value))
+        raise ValueError(tr('Нужен локальный адрес ENET, а не интернет-адрес: ') + str(value))
     return str(address)
 
 
@@ -49,7 +50,7 @@ class RelaySettings:
 
 def field(opcode, payload):
     if len(payload) > MAX_RELAY_BODY:
-        raise RelayError('Сообщение relay превышает допустимый размер.')
+        raise RelayError(tr('Сообщение relay превышает допустимый размер.'))
     return bytes([opcode]) + struct.pack('>I', len(payload)) + payload
 
 
@@ -65,9 +66,9 @@ class ServerDecoder:
 
     def accept(self, data):
         if self.completed and data:
-            raise RelayError('Relay прислал данные после завершения операции.')
+            raise RelayError(tr('Relay прислал данные после завершения операции.'))
         if len(self.pending) + len(data) > MAX_PENDING:
-            raise RelayError('Переполнение буфера relay.')
+            raise RelayError(tr('Переполнение буфера relay.'))
         self.pending.extend(data)
         events = []
         while self.pending:
@@ -78,21 +79,21 @@ class ServerDecoder:
                 status = self.pending[1]
                 del self.pending[:2]
                 if status not in (0, 1):
-                    raise RelayError('Неизвестный код завершения relay: ' + str(status))
+                    raise RelayError(tr('Неизвестный код завершения relay: ') + str(status))
                 if self.pending:
-                    raise RelayError('Лишние данные после кода завершения relay.')
+                    raise RelayError(tr('Лишние данные после кода завершения relay.'))
                 self.completed = True
                 events.append(('done', status == 1))
                 break
             if opcode not in (0x81, 0x82):
-                raise RelayError('Неизвестная команда relay: 0x%02X.' % opcode)
+                raise RelayError(tr('Неизвестная команда relay: 0x%02X.') % opcode)
             # 0x82 has an extra severity byte preceding its u32 length.
             header = 6 if opcode == 0x82 else 5
             if len(self.pending) < header:
                 break
             length = struct.unpack_from('>I', self.pending, header - 4)[0]
             if length > MAX_RELAY_BODY:
-                raise RelayError('Недопустимая длина сообщения relay.')
+                raise RelayError(tr('Недопустимая длина сообщения relay.'))
             if len(self.pending) < header + length:
                 break
             payload = bytes(self.pending[header:header + length])
@@ -109,22 +110,22 @@ class HsfzGuard:
 
     def accept(self, data):
         if len(self.pending) + len(data) > MAX_PENDING:
-            raise RelayError('Переполнение диагностического буфера.')
+            raise RelayError(tr('Переполнение диагностического буфера.'))
         self.pending.extend(data)
         frames = []
         while len(self.pending) >= 6:
             length, control = struct.unpack_from('>IH', self.pending)
             if not 2 <= length <= MAX_HSFZ_BODY:
-                raise RelayError('Недопустимая длина HSFZ: ' + str(length))
+                raise RelayError(tr('Недопустимая длина HSFZ: ') + str(length))
             if control not in (1, 2):
-                raise RelayError('Недопустимый тип HSFZ: 0x%04X.' % control)
+                raise RelayError(tr('Недопустимый тип HSFZ: 0x%04X.') % control)
             if len(self.pending) < length + 6:
                 break
             frame = bytes(self.pending[:length + 6])
             payload = frame[8:]
             combined = self.tail + payload
             if BLOCKED_UDS in combined:
-                raise RelayError('Заблокирована UDS routine 31 01 FD EE 38. Открытие SSH остановлено.')
+                raise RelayError(tr('Заблокирована UDS routine 31 01 FD EE 38. Открытие SSH остановлено.'))
             self.tail = combined[-(len(BLOCKED_UDS) - 1):]
             del self.pending[:length + 6]
             frames.append(frame)
@@ -166,10 +167,10 @@ def discover_gateway(source_ip='', timeout=3, socket_factory=socket.socket):
             host = ipv4(peer[0])
             found[host] = identification
     if not found:
-        raise RelayError(with_enet_hint('Автомобиль не ответил на поиск шлюза BMW.'))
+        raise RelayError(with_enet_hint(tr('Автомобиль не ответил на поиск шлюза BMW.')))
     if len(found) != 1:
-        raise RelayError('Шлюз BMW не найден однозначно. Укажите IP диагностики вручную; '
-                         'при необходимости также IPv4 Ethernet-адаптера ПК.')
+        raise RelayError(tr('Шлюз BMW не найден однозначно. Укажите IP диагностики вручную; '
+                         'при необходимости также IPv4 Ethernet-адаптера ПК.'))
     return next(iter(found))
 
 
@@ -178,7 +179,7 @@ def activate(settings, log=lambda message: None, *, ws_factory=websocket.create_
     """Attempt SSH activation once. The caller verifies SSH separately."""
     settings.validate()
     gateway = settings.gateway or gateway_finder(settings.source_ip)
-    log('Диагностический шлюз BMW: %s:6801.' % gateway)
+    log(tr('Диагностический шлюз BMW: %s:6801.') % gateway)
     decoder, guard = ServerDecoder(), HsfzGuard()
     stop, errors = threading.Event(), queue.Queue()
     ws, car, reader = None, None, None
@@ -195,7 +196,7 @@ def activate(settings, log=lambda message: None, *, ws_factory=websocket.create_
             except (ConnectionResetError, TimeoutError, socket.timeout, websocket.WebSocketTimeoutException):
                 if attempt:
                     raise
-                log('Сетевое подключение прервалось. Повторяем подключение перед открытием SSH.')
+                log(tr('Сетевое подключение прервалось. Повторяем подключение перед открытием SSH.'))
                 time.sleep(1)
             else:
                 break
@@ -203,9 +204,9 @@ def activate(settings, log=lambda message: None, *, ws_factory=websocket.create_
         try:
             car = car_factory(gateway, 6801, settings.source_ip, timeout=6)
         except OSError as exc:
-            raise RelayError(with_enet_hint('Не удалось подключиться к диагностике автомобиля.')) from exc
+            raise RelayError(with_enet_hint(tr('Не удалось подключиться к диагностике автомобиля.'))) from exc
         car.settimeout(.5)
-        log('Соединение для открытия SSH установлено.')
+        log(tr('Соединение для открытия SSH установлено.'))
         for message in hello_frames():
             ws.send_binary(message)
 
@@ -219,7 +220,7 @@ def activate(settings, log=lambda message: None, *, ws_factory=websocket.create_
                     if not data:
                         # A remote ECU reset can close HSFZ. Await the relay's explicit status;
                         # an EOF alone is neither proof of failure nor success.
-                        log('Диагностическое соединение закрылось. Ожидаем результат открытия SSH.')
+                        log(tr('Диагностическое соединение закрылось. Ожидаем результат открытия SSH.'))
                         return
                     ws.send_binary(field(3, data))
             except Exception as exc:
@@ -232,39 +233,39 @@ def activate(settings, log=lambda message: None, *, ws_factory=websocket.create_
         while outcome is None and time.monotonic() < deadline:
             if not errors.empty():
                 raise RelayError(with_enet_hint(
-                    'Ошибка передачи ответа автомобиля (' + type(errors.get()).__name__ + ').'))
+                    tr('Ошибка передачи ответа автомобиля (') + type(errors.get()).__name__ + ').'))
             try:
                 opcode, data = ws.recv_data(control_frame=True)
             except websocket.WebSocketTimeoutException:
                 continue
             if opcode == websocket.ABNF.OPCODE_CLOSE:
-                raise RelayError('Соединение закрылось. Результат открытия SSH не подтверждён.')
+                raise RelayError(tr('Соединение закрылось. Результат открытия SSH не подтверждён.'))
             if opcode in (websocket.ABNF.OPCODE_PING, websocket.ABNF.OPCODE_PONG):
                 continue
             if opcode != websocket.ABNF.OPCODE_BINARY:
-                raise RelayError('Ожидалось бинарное сообщение relay.')
+                raise RelayError(tr('Ожидалось бинарное сообщение relay.'))
             for kind, payload in decoder.accept(data):
                 if kind == 'car':
                     for frame in guard.accept(payload):
                         try:
                             car.sendall(frame)
                         except OSError as exc:
-                            raise RelayError(with_enet_hint('Диагностическая связь с автомобилем прервана.')) from exc
+                            raise RelayError(with_enet_hint(tr('Диагностическая связь с автомобилем прервана.'))) from exc
                 # Keep server-provided text and diagnostic payloads out of the user log.
                 elif kind == 'done':
                     if guard.pending:
-                        raise RelayError('Relay завершился с неполным диагностическим кадром.')
+                        raise RelayError(tr('Relay завершился с неполным диагностическим кадром.'))
                     outcome = payload
         if outcome is not True:
             if outcome is False:
-                raise RelayError('Получен отказ в открытии SSH. Запрос автоматически не повторяется.')
-            raise RelayError(with_enet_hint('Истекло время ожидания открытия SSH. '
-                                           'Запрос автоматически не повторяется.'))
-        log('Запрос открытия SSH выполнен. Проверяем вход.')
+                raise RelayError(tr('Получен отказ в открытии SSH. Запрос автоматически не повторяется.'))
+            raise RelayError(with_enet_hint(tr('Истекло время ожидания открытия SSH. '
+                                           'Запрос автоматически не повторяется.')))
+        log(tr('Запрос открытия SSH выполнен. Проверяем вход.'))
         return gateway
     except (OSError, websocket.WebSocketException) as exc:
-        raise RelayError('Результат открытия SSH не подтверждён (' + type(exc).__name__ +
-                         '). Проверьте интернет и ENET.') from exc
+        raise RelayError(tr('Результат открытия SSH не подтверждён (') + type(exc).__name__ +
+                         tr('). Проверьте интернет и ENET.')) from exc
     finally:
         stop.set()
         if car is not None:
