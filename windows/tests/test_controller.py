@@ -1,10 +1,11 @@
 from pathlib import Path
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
-from nbt_aad_pc.controller import Connection, Installer, remote_path, restart
-from nbt_aad_pc.ssh import RemoteError, RemoteExitError
+from nbt_aad_pc.controller import Connection, Installer, restart
+from nbt_aad_pc.ssh import RemoteError, RemoteExitError, Session
 
 
 class FakeSession:
@@ -14,6 +15,7 @@ class FakeSession:
         self.node = 'hu-omap'
         self.credential_output = b'NBT_AAD_SHELL_PID=42\npid euid\n42 0\n'
         self.fail_dry = False
+        self.fail_mkdir = False
         self.fail_commit = False
         self.no_success = False
         self.fail_verify = False
@@ -25,17 +27,32 @@ class FakeSession:
     def close(self):
         self.closed = True
 
-    def upload(self, path, data):
-        self.uploads[path] = data
+    upload = Session.upload
 
     def run(self, command, **kwargs):
         self.calls.append((command, kwargs))
-        if self.flat_shmem and 'mkdir' in command and '/dev/shmem/' in command:
-            raise RemoteError('Function not implemented')
         if command == 'uname -s; uname -n':
             return ('QNX\n' + self.node + '\n').encode()
+        if self.node == 'hu-jacinto':
+            prefix = 'on -f /net/hu-omap /bin/sh -c '
+            if not command.startswith(prefix):
+                raise RemoteExitError(1, 'Path unavailable from Jacinto: ' + command)
+            command, = shlex.split(command[len(prefix):])
+            if '/net/hu-omap/' in command:
+                raise RemoteExitError(1, 'Expected local OMAP filesystem paths')
+        if 'mkdir ' in command and self.fail_mkdir:
+            raise RemoteExitError(1, 'mkdir: No such file or directory')
+        if self.flat_shmem and 'mkdir' in command and '/dev/shmem/' in command:
+            raise RemoteError('Function not implemented')
         if 'NBT_AAD_SHELL_PID=' in command:
             return self.credential_output
+        if command.startswith('umask 077; cat > '):
+            path, = shlex.split(command.partition(' > ')[2])
+            self.uploads[path] = kwargs['data']
+            return b''
+        if command.startswith('cat '):
+            path, = shlex.split(command[4:])
+            return self.uploads[path]
         if '--dry-run' in command:
             if self.fail_dry:
                 raise RemoteError('dry-run failed')
@@ -102,12 +119,31 @@ class ControllerTest(unittest.TestCase):
         self.assertIn('test -x /opt/aa/pf_aa', self.commands())
         self.assertNotIn('pf_aa --install', self.commands())
 
-    def test_jacinto_uses_qnet_upload_and_omap_reset(self):
+    def test_jacinto_stages_transfers_and_runs_on_omap_for_install_and_uninstall(self):
         self.session.node = 'hu-jacinto'
-        self.execute()
-        self.assertTrue(all(p.startswith('/net/hu-omap/var/opt/') for p in self.session.uploads))
-        self.assertIn('on -f /net/hu-omap /bin/sh -c', self.commands())
-        self.assertEqual(remote_path('hu-omap', '/dev/shmem/a'), '/dev/shmem/a')
+        for action, removal in (('install', 'keep'), ('uninstall', 'keep'), ('uninstall', 'purge')):
+            with self.subTest(action=action, removal=removal):
+                self.session.uploads.clear()
+                self.session.calls.clear()
+                self.execute(action, removal=removal)
+                self.assertEqual(len(self.session.uploads), 2 if action == 'install' else 1)
+                self.assertTrue(all(p.startswith('/var/opt/nbt-aad-pc-') for p in self.session.uploads))
+                commands = self.commands()
+                self.assertIn('cat /var/opt/nbt-aad-pc-', commands)
+                self.assertIn(action + ' --source /var/opt/nbt-aad-pc-', commands)
+                self.assertIn('rm -rf /var/opt/nbt-aad-pc-', commands)
+                self.assertIn('OnOffDSICommander appreset', commands)
+
+    def test_purge_preparation_failure_never_reports_partial_deletion(self):
+        self.session.node = 'hu-jacinto'
+        self.session.fail_mkdir = True
+        with self.assertRaisesRegex(RemoteError, 'временный каталог.*hu-omap.*mkdir'):
+            self.execute('uninstall', removal='purge')
+        self.assertFalse(self.session.uploads)
+        self.assertNotIn('--purge', self.commands())
+        self.assertNotIn('appreset', self.commands())
+        self.assertIn('Сбой до запуска установки или удаления.', self.logs)
+        self.assertFalse(any('могла быть уже удалена' in line for line in self.logs))
 
     def test_status_has_no_staging_upload_or_reset(self):
         self.execute('status')
@@ -189,7 +225,7 @@ class ControllerTest(unittest.TestCase):
         self.session.flat_shmem = True
         self.execute()
         self.assertTrue(self.session.uploads)
-        self.assertTrue(all(path.startswith('/net/hu-omap/var/opt/nbt-aad-pc-')
+        self.assertTrue(all(path.startswith('/var/opt/nbt-aad-pc-')
                             for path in self.session.uploads))
         self.assertNotIn('/dev/shmem/', self.commands())
         self.assertTrue(self.session.closed)
