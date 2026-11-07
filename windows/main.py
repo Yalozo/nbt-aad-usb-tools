@@ -21,10 +21,13 @@ if '--self-test' in sys.argv:
         root = tk.Tk()
         root.withdraw()
         app = App(root, state=directory)
-        root.update()
         assert [button.cget('text') for button in app.action_buttons] == [
             'Состояние', 'Установить / обновить', 'Удалить', 'Очистить ГУ', 'Перезагрузить ГУ']
         assert not hasattr(app, 'ssh_open_button')
+        app.language_choice.set('English')
+        app.change_language()
+        assert app.action_buttons[1].cget('text') == 'Install / Update'
+        assert app.send_log_button.cget('text') == 'Send Log'
         app.close()
 else:
     from nbt_aad_pc.ui import main

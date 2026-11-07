@@ -138,7 +138,6 @@ class NativeUITest(unittest.TestCase):
             app.password.set('unique-secret-password')
             app.snapshot()
             app.write('unique-secret-password test redaction')
-            root.update()
             self.assertEqual(app.host.get(), '169.254.199.99')
             self.assertTrue(app.reboot.get())
             self.assertFalse(app.preview.get())
