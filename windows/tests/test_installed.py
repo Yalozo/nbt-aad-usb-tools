@@ -16,7 +16,7 @@ class InstalledVersionTest(unittest.TestCase):
         self.assertEqual(embedded_version(elf() + b'\0rhmiapp-24b-credits (Nov 4)\0', True),
                          'rhmiapp-24b-credits')
 
-    def test_offline_match_requires_all_six_files_and_reads_qnet_without_execution(self):
+    def test_offline_match_reads_all_six_files_on_omap_without_running_them(self):
         with tempfile.TemporaryDirectory() as temp:
             metadata, payloads = release('manual-build', '2026-11-04T10:00:00Z')
             package = download_package(metadata, Path(temp), downloader=lambda url, limit: payloads[url])
@@ -38,7 +38,8 @@ class InstalledVersionTest(unittest.TestCase):
                 files['release/NbtAad.xml'] += b'changed'
                 changed = installed_versions(Reader(), 'hu-jacinto', Path(temp), lambda _: None)
                 self.assertNotIn('Комплект совпадает', changed)
-            self.assertTrue(all('/net/hu-omap/' in c for c in calls))
+            self.assertTrue(all(c.startswith('on -f /net/hu-omap /bin/sh -c ') for c in calls))
+            self.assertTrue(all('/net/hu-omap/' not in c for c in calls))
             self.assertTrue(all('cat ' in c and '--version' not in c and 'mkdir' not in c for c in calls))
 
     def test_status_matches_helper_hash_and_reports_version_without_running_it(self):
