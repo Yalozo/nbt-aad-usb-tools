@@ -17,6 +17,12 @@ class RemoteExitError(RemoteError):
         super().__init__('Команда ГУ не завершилась успешно (код %s). %s' % (code, detail))
 
 
+def on_omap(node, command):
+    if node == 'hu-jacinto':
+        return 'on -f /net/hu-omap /bin/sh -c ' + shlex.quote(command)
+    return command
+
+
 class TrustPolicy(paramiko.MissingHostKeyPolicy):
     def __init__(self, confirm, known_hosts):
         self.confirm, self.known_hosts = confirm, Path(known_hosts)
@@ -98,8 +104,9 @@ class Session:
         finally:
             channel.close()
 
-    def upload(self, path, data):
-        self.run('umask 077; cat > ' + shlex.quote(path), data=data, stream=False)
-        actual = self.run('cat ' + shlex.quote(path), stream=False, max_output=len(data)+4096)
+    def upload(self, path, data, *, node='hu-omap'):
+        quoted = shlex.quote(path)
+        self.run(on_omap(node, 'umask 077; cat > ' + quoted), data=data, stream=False)
+        actual = self.run(on_omap(node, 'cat ' + quoted), stream=False, max_output=len(data)+4096)
         if hashlib.sha256(actual).digest() != hashlib.sha256(data).digest():
             raise RemoteError('Не совпала контрольная сумма загруженного файла.')
