@@ -1,5 +1,10 @@
 # Changes
 
+## Windows/macOS app 0.1.9
+
+- Run staging, file transfer, readback, installation, removal and status on hu-omap when SSH lands on hu-jacinto. This fixes the mkdir failure caused by resolving /net/hu-omap/var/opt from Jacinto.
+- Report preparation failures at the correct stage and log a staging directory only after its creation is acknowledged.
+
 ## USB 0.4.1 / Windows/macOS app 0.1.8
 
 - Download optional pf_aa from the same upstream release and validate its digest, size and ARM ELF32 header. Preserve six-file cache compatibility and include the helper digest in new content-addressed package identities.
