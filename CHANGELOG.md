@@ -1,5 +1,12 @@
 # Changes
 
+## USB 0.4.2 / Windows/macOS app 0.1.10
+
+- Check SSH before each head-unit action and open it automatically when needed. Retry a transient network handshake once before sending any diagnostic request.
+- Show online releases and cached builds in one list, mark downloaded builds, and reuse the exact SHA-256-matched package during installation.
+- Prepare a reviewable support email with the current log attached. Add ENET adapter help and clearer connection guidance.
+- Continue full cleanup when optional paths are absent. On the desktop, resolve the restart utility on hu-omap, set its library path, and log the chosen executable.
+
 ## Windows/macOS app 0.1.9
 
 - Run staging, file transfer, readback, installation, removal and status on hu-omap when SSH lands on hu-jacinto. This fixes the mkdir failure caused by resolving /net/hu-omap/var/opt from Jacinto.

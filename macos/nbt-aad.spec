@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 import runpy
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 root = Path(SPECPATH).parent
 version = runpy.run_path(str(root / 'windows/nbt_aad_pc/__init__.py'))['__version__']
@@ -9,7 +9,7 @@ a = Analysis(
     [str(root / 'windows/main.py')],
     pathex=[str(root / 'windows')],
     binaries=[],
-    datas=[(str(root / 'nbt-aad.sh'), '.')] + copy_metadata('paramiko', recursive=True),
+    datas=[(str(root / 'nbt-aad.sh'), '.')] + copy_metadata('paramiko', recursive=True) + collect_data_files('certifi'),
     hiddenimports=[], hookspath=[], hooksconfig={}, runtime_hooks=[], excludes=[],
     noarchive=False,
 )

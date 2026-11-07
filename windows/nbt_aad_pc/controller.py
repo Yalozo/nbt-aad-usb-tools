@@ -14,6 +14,7 @@ class Connection:
     host: str = '169.254.199.99'
     port: int = 22
     password: str = ''
+    source_ip: str = ''
 
     def validate(self):
         ipaddress.ip_address(self.host)
@@ -21,6 +22,8 @@ class Connection:
             raise ValueError('Неверный порт SSH.')
         if not self.password:
             raise ValueError('Введите пароль root.')
+        if self.source_ip:
+            ipaddress.IPv4Address(self.source_ip)
 
 
 def detect(session):
@@ -45,9 +48,28 @@ def detect(session):
 def restart(session, node, files_processed=False):
     # When called after installation, the commit has already been verified.
     # so distinguish a requested reset from a confirmed boot of the head unit.
-    command = on_omap(node, 'command -v OnOffDSICommander >/dev/null && '
-                      'if command -v sync >/dev/null 2>&1; then sync || exit 1; fi; '
-                      'echo NBT_AAD_RESTART_REQUESTED && OnOffDSICommander appreset')
+    command = on_omap(node, '''
+reset_bin=
+for candidate in /opt/core/bin/OnOffDSICommander /opt/car/bin/OnOffDSICommander \\
+                 /fs/sda0/opt/core/bin/OnOffDSICommander /fs/sda0/opt/car/bin/OnOffDSICommander; do
+    if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+        reset_bin=$candidate
+        break
+    fi
+done
+if [ -z "$reset_bin" ]; then
+    reset_bin=$(command -v OnOffDSICommander) || reset_bin=
+    case "$reset_bin" in /*) ;; *) reset_bin= ;; esac
+fi
+if [ ! -f "$reset_bin" ] || [ ! -x "$reset_bin" ]; then
+    echo 'OnOffDSICommander: executable unavailable on hu-omap.' >&2
+    exit 127
+fi
+if command -v sync >/dev/null 2>&1; then sync || exit 1; fi
+echo "OnOffDSICommander: $reset_bin"
+echo NBT_AAD_RESTART_REQUESTED
+LD_LIBRARY_PATH="/opt/sys/lib:/opt/core/lib:/opt/car/lib:/opt/os/lib:/opt/share/lib:/boot/lib:/lib:/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$reset_bin" appreset
+'''.strip())
     seen = []
     original_log = session.log
     def collect(line):
@@ -95,8 +117,9 @@ class Installer:
         if sum(map(len, files.values())) > 16 * 1024 * 1024:
             raise PackageError('Комплект слишком велик для временной загрузки на ГУ.')
         self.log('Подключение по SSH к %s:%s…' % (connection.host, connection.port))
+        kwargs = {'source_ip': connection.source_ip} if connection.source_ip else {}
         session = self.session_factory(connection.host, connection.port, connection.password,
-                                       self.state / 'known_hosts', self.confirm, self.log)
+                                       self.state / 'known_hosts', self.confirm, self.log, **kwargs)
         stage, node = None, None
         completed = False
         operation_started = False

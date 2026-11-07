@@ -1,12 +1,59 @@
 import json
+import importlib.util
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-@unittest.skipUnless(sys.platform in ('win32', 'darwin'), 'Native UI tests run on Windows/macOS')
+@unittest.skipUnless(sys.platform in ('win32', 'darwin') and importlib.util.find_spec('_tkinter'),
+                     'Native UI tests require a Tk-enabled Python on Windows/macOS')
 class NativeUITest(unittest.TestCase):
+    def test_all_head_unit_actions_automatically_verify_ssh_and_use_found_host(self):
+        import tkinter as tk
+        from nbt_aad_pc.ui import App
+        from nbt_aad_pc.controller import Connection
+        with tempfile.TemporaryDirectory() as directory:
+            root = tk.Tk(); root.withdraw()
+            app = App(root, state=directory)
+            try:
+                app.gateway.set('169.254.199.1')
+                app.source_ip.set('169.254.199.50')
+                app.password.set('private-test-password')
+                result = Connection('169.254.199.119', 22, 'private-test-password', '169.254.199.50')
+                with patch('nbt_aad_pc.ui.open_ssh', return_value=result) as opener, \
+                     patch('nbt_aad_pc.ui.Installer') as installer, \
+                     patch.object(app, 'get_package') as get_package, \
+                     patch('nbt_aad_pc.ui.messagebox.askyesno', return_value=True), \
+                     patch.object(app, 'start', side_effect=lambda title, work: work()):
+                    execute = installer.return_value.execute
+                    execute.side_effect = lambda *args, **kwargs: opener.assert_called_once()
+                    for action in ('status', 'install', 'uninstall', 'purge', 'restart'):
+                        with self.subTest(action=action):
+                            opener.reset_mock()
+                            execute.reset_mock()
+                            app.operate(action)
+                            execute.assert_called_once()
+                            args = execute.call_args.args
+                            self.assertEqual(args[0], 'uninstall' if action == 'purge' else action)
+                            self.assertIs(args[1], result)
+                            self.assertIs(args[2], get_package.return_value if action == 'install' else None)
+                    get_package.assert_called_once()
+                    opener.side_effect = RuntimeError('SSH недоступен')
+                    installer.reset_mock()
+                    with self.assertRaisesRegex(RuntimeError, 'SSH недоступен'):
+                        app.operate('status')
+                    installer.assert_not_called()
+                root.after_cancel(app.poll_after)
+                app.poll()
+                self.assertEqual(app.host.get(), '169.254.199.119')
+                saved = (Path(directory) / 'settings.json').read_text()
+                self.assertNotIn('private-test-password', saved)
+                self.assertEqual(json.loads(saved)['gateway'], '169.254.199.1')
+                self.assertEqual(json.loads(saved)['source_ip'], '169.254.199.50')
+            finally:
+                app.close()
+
     def test_window_constructs_and_password_is_not_saved(self):
         import tkinter as tk
         from nbt_aad_pc.ui import App
@@ -23,9 +70,11 @@ class NativeUITest(unittest.TestCase):
             self.assertFalse(app.preview.get())
             self.assertEqual([button.cget('text') for button in app.action_buttons], [
                 'Состояние', 'Установить / обновить', 'Удалить', 'Очистить ГУ', 'Перезагрузить ГУ'])
+            self.assertFalse(hasattr(app, 'ssh_open_button'))
             self.assertEqual(app.download_button.master, app.release.master)
-            self.assertFalse(any(widget.cget('text') == 'Обновить список' for widget in app.widgets
-                                 if 'text' in widget.keys()))
+            self.assertFalse(hasattr(app, 'offline'))
+            self.assertTrue(any('ipconfig' in tooltip.text and 'Поле необязательное' in tooltip.text
+                                for tooltip in app.tooltips))
             config = (Path(directory) / 'settings.json').read_text(encoding='utf-8')
             self.assertNotIn('password', config)
             self.assertEqual(json.loads(config)['port'], 22)
@@ -40,6 +89,7 @@ class NativeUITest(unittest.TestCase):
             app = App(root, state=directory)
             try:
                 with patch('nbt_aad_pc.ui.Installer') as installer, \
+                     patch('nbt_aad_pc.ui.open_ssh', side_effect=lambda connection, *args: connection) as opener, \
                      patch.object(app, 'get_package', side_effect=AssertionError('uninstall must not download')), \
                      patch.object(app, 'start', side_effect=lambda title, work: work()), \
                      patch('nbt_aad_pc.ui.messagebox.askyesno', return_value=False) as question:
@@ -47,8 +97,10 @@ class NativeUITest(unittest.TestCase):
                     self.assertEqual(installer.return_value.execute.call_args.kwargs['removal'], 'keep')
                     question.assert_not_called()
                     installer.reset_mock()
+                    opener.reset_mock()
                     app.purge_button.invoke()
                     installer.assert_not_called()
+                    opener.assert_not_called()
                     question.assert_called_once()
                     question.return_value = True
                     app.purge_button.invoke()
@@ -62,7 +114,7 @@ class NativeUITest(unittest.TestCase):
                 app.busy = False
                 app.close()
 
-    def test_offline_library_selection_persists_and_restart_does_not_download(self):
+    def test_unified_list_merges_exact_builds_and_restores_old_offline_selection(self):
         import hashlib
         import tkinter as tk
         from nbt_aad_pc.ui import App
@@ -72,28 +124,42 @@ class NativeUITest(unittest.TestCase):
             cache = Path(directory) / 'packages'
             older, payloads = release('older', '2026-11-01T10:00:00Z')
             first = download_package(older, cache, downloader=lambda url, limit: payloads[url])
-            newer, data = release('newer', '2026-11-04T10:00:00Z')
+            newer, data = release('older', '2026-11-04T10:00:00Z')
             url = newer['assets'][0]['browser_download_url']
             data[url] += b'newer build'
             newer['assets'][0].update(size=len(data[url]),
                 digest='sha256:' + hashlib.sha256(data[url]).hexdigest())
-            download_package(newer, cache, downloader=lambda url, limit: data[url])
+            (Path(directory) / 'settings.json').write_text(json.dumps(
+                {'offline': True, 'offline_package': first.path.name}), encoding='utf-8')
             root = tk.Tk(); root.withdraw()
             app = App(root, state=directory)
             try:
-                self.assertEqual(len(app.local_packages), 2)
-                index = next(i for i, p in enumerate(app.local_packages) if p.path == first.path)
-                app.local_release.current(index)
-                app.offline.set(True)
-                app.offline_changed()
-                self.assertEqual(str(app.local_release.cget('state')), 'readonly')
-                self.assertEqual(str(app.release.cget('state')), 'disabled')
+                self.assertEqual(app.selected_release(), (first.path.name, None))
+                app.releases = [newer, older]
+                app.update_release_list()
+                self.assertEqual(len(app.release_choices), 3)  # auto + two distinct builds
+                self.assertEqual(app.selected_release(), (first.path.name, older))
+                cached_index, = app.release.curselection()
+                self.assertTrue(app.release.get(cached_index).startswith('Скачан · '))
+                self.assertTrue(app.release.itemcget(cached_index, 'foreground'))
+                self.assertEqual(app.release.itemcget(cached_index, 'foreground'),
+                                 app.release.itemcget(cached_index, 'selectforeground'))
+                online_index = next(i for i, choice in enumerate(app.release_choices) if choice[1] is newer)
+                self.assertFalse(app.release.itemcget(online_index, 'foreground'))
                 with patch('nbt_aad_pc.ui.list_releases', side_effect=AssertionError('network')), \
                      patch('nbt_aad_pc.ui.download_package', side_effect=AssertionError('download')):
-                    self.assertEqual(app.get_package(True, False, None, first.path.name).path, first.path)
-                    with self.assertRaises(PackageError):
-                        app.get_package(True, False, None)
+                    self.assertEqual(app.get_package(False, app.selected_release()).path, first.path)
+                online_choice = next(choice for choice in app.release_choices if choice[1] is newer)
+                with patch('nbt_aad_pc.ui.download_package',
+                           side_effect=lambda release, cache, log: download_package(
+                               release, cache, log, downloader=lambda url, limit: data[url])) as download:
+                    second = app.get_package(False, online_choice)
+                    download.assert_called_once()
+                    self.assertNotEqual(first.path, second.path)
+                    app.get_package(False, online_choice)
+                    download.assert_called_once()
                 with patch('nbt_aad_pc.ui.Installer') as installer, \
+                     patch('nbt_aad_pc.ui.open_ssh', side_effect=lambda connection, *args: connection), \
                      patch.object(app, 'get_package', side_effect=AssertionError('restart must not load package')), \
                      patch.object(app, 'start', side_effect=lambda title, work: work()):
                     app.restart_button.invoke()
@@ -105,18 +171,19 @@ class NativeUITest(unittest.TestCase):
             root = tk.Tk(); root.withdraw()
             restored = App(root, state=directory)
             try:
-                self.assertTrue(restored.offline.get())
-                self.assertEqual(restored.selected_local_identifier(), first.path.name)
+                self.assertEqual(restored.selected_release(), (first.path.name, None))
                 # A corrupted chosen build must not fall back to the newer one.
                 first.files()['nbt-aad'].write_bytes(b'corrupted')
                 with self.assertRaises(PackageError):
-                    restored.get_package(True, False, None, first.path.name)
-                restored.update_cache_label()
-                self.assertIsNone(restored.selected_local_identifier())
+                    restored.get_package(False, restored.selected_release())
+                restored.update_release_list()
+                with self.assertRaises(PackageError):
+                    restored.selected_release()
             finally:
                 restored.close()
             settings = json.loads((Path(directory) / 'settings.json').read_text())
-            self.assertEqual(settings['offline_package'], first.path.name)
+            self.assertEqual(settings['release_package'], first.path.name)
+            self.assertNotIn('offline', settings)
 
     def test_new_download_appears_in_local_library_automatically(self):
         import tkinter as tk
@@ -127,15 +194,39 @@ class NativeUITest(unittest.TestCase):
             root = tk.Tk(); root.withdraw()
             app = App(root, state=directory)
             try:
-                self.assertFalse(app.local_packages)
+                self.assertEqual(app.release_choices, [(None, None)])
                 metadata, payloads = release('new-download', '2026-11-05T10:00:00Z')
                 package = download_package(metadata, Path(directory) / 'packages',
                                            downloader=lambda url, limit: payloads[url])
                 app.events.put(('package_downloaded', package.path.name))
                 root.after_cancel(app.poll_after)
                 app.poll()
-                self.assertEqual(len(app.local_packages), 1)
-                self.assertEqual(app.selected_local_identifier(), package.path.name)
+                self.assertIn((package.path.name, None), app.release_choices)
+                self.assertTrue(app.release.get(1).startswith('Скачан · '))
+            finally:
+                app.close()
+
+    def test_send_log_opens_a_draft_with_the_current_log_attached(self):
+        from email import policy
+        from email.parser import BytesParser
+        import tkinter as tk
+        from nbt_aad_pc.ui import App
+        with tempfile.TemporaryDirectory() as directory:
+            root = tk.Tk(); root.withdraw()
+            app = App(root, state=directory)
+            try:
+                app.write('Тестовая запись журнала')
+                with patch('nbt_aad_pc.ui.sys.platform', 'win32'), \
+                     patch('nbt_aad_pc.ui.os.startfile', create=True) as open_draft:
+                    app.send_log_button.invoke()
+                draft = app.logfile.with_suffix('.eml')
+                open_draft.assert_called_once_with(str(draft.resolve()))
+                message = BytesParser(policy=policy.default).parsebytes(draft.read_bytes())
+                self.assertEqual(message['To'], 'avyalozo@gmail.com')
+                self.assertEqual(message['X-Unsent'], '1')
+                attachment, = message.iter_attachments()
+                self.assertEqual(attachment.get_filename(), app.logfile.name)
+                self.assertEqual(attachment.get_payload(decode=True), app.logfile.read_bytes())
             finally:
                 app.close()
 

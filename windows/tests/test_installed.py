@@ -65,5 +65,5 @@ class InstalledVersionTest(unittest.TestCase):
                 return b''
         with tempfile.TemporaryDirectory() as temp:
             result = installed_versions(Empty(), 'hu-omap', Path(temp), lambda _: None)
-        self.assertIn('NBT-AAD не установлен', result)
+        self.assertIn('Нет данных для определения версии NBT-AAD', result)
         self.assertNotIn('v1.', result)

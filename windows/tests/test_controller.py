@@ -66,7 +66,7 @@ class FakeSession:
             return ('SUCCESS: ' + action + ' completed.\n').encode()
         if 'test -s /opt/aa' in command and self.fail_verify:
             raise RemoteError('verification failed')
-        if 'OnOffDSICommander appreset' in command:
+        if 'echo NBT_AAD_RESTART_REQUESTED' in command:
             if self.fail_reset_without_ack:
                 raise RemoteError('SSH closed before reset acknowledgment')
             self.log('NBT_AAD_RESTART_REQUESTED')
@@ -105,7 +105,7 @@ class ControllerTest(unittest.TestCase):
         self.assertIn('завершены', self.execute())
         commands = self.commands()
         self.assertLess(commands.index('--dry-run'), commands.index('test -s /opt/aa'))
-        self.assertLess(commands.index('rm -rf'), commands.index('OnOffDSICommander appreset'))
+        self.assertLess(commands.index('rm -rf'), commands.index('echo NBT_AAD_RESTART_REQUESTED'))
         self.assertEqual(len(self.session.uploads), 2)
         self.assertTrue(self.session.closed)
 
@@ -132,7 +132,7 @@ class ControllerTest(unittest.TestCase):
                 self.assertIn('cat /var/opt/nbt-aad-pc-', commands)
                 self.assertIn(action + ' --source /var/opt/nbt-aad-pc-', commands)
                 self.assertIn('rm -rf /var/opt/nbt-aad-pc-', commands)
-                self.assertIn('OnOffDSICommander appreset', commands)
+                self.assertIn('echo NBT_AAD_RESTART_REQUESTED', commands)
 
     def test_purge_preparation_failure_never_reports_partial_deletion(self):
         self.session.node = 'hu-jacinto'
@@ -264,17 +264,25 @@ class ControllerTest(unittest.TestCase):
             self.assertNotIn('appreset', self.commands())
 
     @unittest.skipIf(os.name == 'nt', 'Runs the remote POSIX command locally')
-    def test_reset_command_runs_without_sync_utility(self):
-        binary = self.root / 'OnOffDSICommander'
+    def test_reset_prefers_firmware_path_and_passes_library_environment_without_sync(self):
+        binary = self.root / 'core-bin/OnOffDSICommander'
+        binary.parent.mkdir()
         marker = self.root / 'reset-requested'
-        binary.write_text('#!/bin/sh\necho "$1" > "' + str(marker) + '"\n')
+        binary.write_text('#!/bin/sh\n'
+                          'case "$LD_LIBRARY_PATH" in /opt/sys/lib:*:/inherited/lib) ;; *) exit 126 ;; esac\n'
+                          'echo "$1" > "' + str(marker) + '"\n')
         binary.chmod(0o755)
+        wrong = self.root / 'OnOffDSICommander'
+        wrong.write_text('#!/bin/sh\nexit 126\n')
+        wrong.chmod(0o755)
         class LocalShellSession:
             def __init__(session):
                 session.log = self.logs.append
             def run(session, command, **kwargs):
+                command = command.replace('/opt/core/bin/OnOffDSICommander', str(binary), 1)
                 result = subprocess.run(['/bin/sh', '-c', command],
-                    env={'PATH': str(self.root)}, capture_output=True, text=True, timeout=5)
+                    env={'PATH': str(self.root), 'LD_LIBRARY_PATH': '/inherited/lib'},
+                    capture_output=True, text=True, timeout=5)
                 for line in result.stdout.splitlines():
                     session.log(line)
                 if result.returncode:
@@ -283,3 +291,4 @@ class ControllerTest(unittest.TestCase):
         message = restart(LocalShellSession(), 'hu-omap')
         self.assertIn('Перезагрузка ГУ запрошена', message)
         self.assertEqual(marker.read_text(), 'appreset\n')
+        self.assertIn('OnOffDSICommander: ' + str(binary), self.logs)

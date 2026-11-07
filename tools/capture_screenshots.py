@@ -14,7 +14,7 @@ import tkinter as tk
 from PIL import ImageGrab, ImageStat
 from nbt_aad_pc.ui import App
 from nbt_aad_pc import __version__
-from nbt_aad_pc.releases import list_releases
+from nbt_aad_pc.releases import list_releases, package_identifier, select_assets
 
 out = root_dir / 'docs/screenshots'
 out.mkdir(parents=True, exist_ok=True)
@@ -39,7 +39,8 @@ with tempfile.TemporaryDirectory(prefix='nbt-aad-screenshots-') as directory:
     if len(selected) < 2:
         raise RuntimeError('Need two real releases for the offline-library example.')
     app.events.put(('releases', selected))
-    packages = [app.get_package(False, False, release) for release in reversed(selected)]
+    packages = [app.get_package(False, (package_identifier(select_assets(release)), release))
+                for release in reversed(selected)]
     root.after_cancel(app.poll_after)
     app.poll()
     root.update()
@@ -60,12 +61,8 @@ with tempfile.TemporaryDirectory(prefix='nbt-aad-screenshots-') as directory:
         print('Captured real application window:', name, screenshot.size)
 
     capture('installer-main.png')
-    app.offline.set(True)
-    app.offline_changed()
-    # Select a real verified cached build; no online fetch occurs in this mode.
-    app.local_release.current(0)
-    app.save_preferences()
-    app.update_cache_label()
+    app.preferred_release = packages[-1].path.name
+    app.update_release_list()
     capture('installer-offline.png')
     (out / 'capture.json').write_text(json.dumps({
         'application': 'NBT-AAD PC', 'platform': 'Windows',

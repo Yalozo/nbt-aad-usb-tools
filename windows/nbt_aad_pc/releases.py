@@ -26,6 +26,13 @@ class PackageError(Exception):
     pass
 
 
+CACHE_ERRORS = (OSError, ValueError, KeyError, TypeError, PackageError)
+
+
+def package_identifier(assets):
+    return hashlib.sha256(''.join(asset['digest'] for asset in assets).encode()).hexdigest()[:24]
+
+
 def _https(url):
     parts = urlparse(url)
     if parts.scheme != 'https' or not parts.hostname or parts.username:
@@ -190,6 +197,10 @@ def download_package(release, cache, log=lambda _: None, downloader=fetch):
     assets = select_assets(release)
     cache = Path(cache)
     cache.mkdir(parents=True, exist_ok=True)
+    identifier = package_identifier(assets)
+    destination = cache / identifier
+    if destination.is_symlink():
+        raise PackageError('Ссылка вместо сохранённого комплекта недопустима.')
     work = Path(tempfile.mkdtemp(prefix='download-', dir=cache))
     try:
         payloads = []
@@ -218,10 +229,22 @@ def download_package(release, cache, log=lambda _: None, downloader=fetch):
                               for file in [work / 'nbt-aad', *helper_files, *sorted((work / 'release').iterdir())]}}
         (work / 'package.json').write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding='utf-8')
         # Content-addressed packages survive moving upstream tags and interrupted downloads.
-        identifier = hashlib.sha256(''.join(a['digest'] for a in assets).encode()).hexdigest()[:24]
-        destination = cache / identifier
         if destination.exists():
-            load_package(destination)
+            try:
+                local_package(cache, identifier)
+            except CACHE_ERRORS:
+                load_package(work)
+                previous = work.with_name(work.name + '-invalid')
+                destination.rename(previous)
+                try:
+                    work.rename(destination)
+                except OSError:
+                    previous.rename(destination)
+                    raise
+                if previous.is_dir():
+                    shutil.rmtree(previous, ignore_errors=True)
+                else:
+                    previous.unlink()
         else:
             work.rename(destination)
         pointer = cache / 'last.json.tmp'
@@ -267,7 +290,7 @@ def list_local_packages(cache, on_error=lambda _: None):
             continue
         try:
             packages.append(local_package(cache, path.name))
-        except (OSError, ValueError, KeyError, TypeError, PackageError) as exc:
+        except CACHE_ERRORS as exc:
             on_error('Пропущен повреждённый комплект ' + path.name + ': ' + str(exc))
     return sorted(packages, key=lambda p: (p.metadata.get('downloaded_at') or
                   p.metadata['release'].get('published_at') or '', p.path.name), reverse=True)

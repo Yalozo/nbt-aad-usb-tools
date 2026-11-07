@@ -2,8 +2,8 @@
 import hashlib
 import re
 import shlex
-from .ssh import on_omap
 from .releases import FILES, MAX_ASSET, list_local_packages, validate_elf, PackageError
+from .ssh import on_omap
 
 
 def embedded_version(data, plugin=False):
@@ -69,5 +69,5 @@ def installed_versions(session, node, cache, log):
         lines.append('Точного совпадения со скачанными комплектами нет. '
                      'Номера выше прочитаны из файлов; соответствие одному релизу не подтверждено.')
     else:
-        lines.append('NBT-AAD не установлен.')
+        lines.append('Нет данных для определения версии NBT-AAD.')
     return '\n'.join(lines)

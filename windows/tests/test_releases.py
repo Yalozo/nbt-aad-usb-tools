@@ -108,6 +108,15 @@ class ReleaseTest(unittest.TestCase):
         with self.assertRaises(r.PackageError):
             r.cached_package(self.cache)
 
+    def test_verified_redownload_repairs_only_the_selected_build(self):
+        first, second = self.two_versions()
+        first.files()['nbt-aad'].write_bytes(b'bad')
+        repaired = r.download_package(self.release, self.cache, downloader=self.download)
+        self.assertEqual(repaired.path, first.path)
+        self.assertEqual(repaired.files()['nbt-aad'].read_bytes(), elf())
+        self.assertEqual(r.local_package(self.cache, second.path.name).files()['nbt-aad'].read_bytes(),
+                         elf() + b'next-build')
+
     def test_bad_digest_stops_before_publishing_package(self):
         self.release['assets'][0]['digest'] = 'sha256:' + 'a' * 64
         with self.assertRaises(r.PackageError):

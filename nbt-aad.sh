@@ -7,7 +7,7 @@ LC_ALL=C
 export LC_ALL
 umask 077
 
-VERSION=0.4.1
+VERSION=0.4.2
 REMOTE_NODE=/net/hu-omap
 FS_ROOT=/fs/sda0
 AA=/opt/aa
@@ -45,7 +45,7 @@ exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
 usage() {
     cat <<'EOF'
-NBT-AAD USB Tools 0.4.1
+NBT-AAD USB Tools 0.4.2
 Usage: sh nbt-aad.sh install|uninstall|status [options]
   --usb /mnt/umass...   Select one USB drive explicitly
   --source PATH        Use a private /var/opt/nbt-aad-pc-<32 hex> SSH upload
@@ -320,19 +320,19 @@ if [ "$ACTION" = uninstall ]; then say "Removal mode: $REMOVE_MODE"; fi
 # Bluetooth databases or firmware settings. Native HMI caches are shared.
 purge_paths() {
     for target in "$AA" "$PLUGIN" "$SETTINGS" "$BACKUPS" "$VAR_BACKUPS"; do
-        exists "$target" && echo "$target"
+        if exists "$target"; then echo "$target"; fi
     done
     for target in "$RAM"/nbt-aad.log "$RAM"/nbt-aad-app.log \
         "$RAM"/nbt-aad-state "$RAM"/nbt-aad-pdc "$RAM"/nbt-aad-gear \
         "$RAM"/nbt-aad-daynight "$RAM"/nbt-aad-lm1280 "$RAM"/nbt-aad-kombi-nav.shown \
         "$TMP"/nbt-aad.log "$TMP"/nbt-aad-app.log "$RAM"/pf_aa-check.conf; do
-        exists "$target" && echo "$target"
+        if exists "$target"; then echo "$target"; fi
     done
     for target in "$SOURCE_ROOT"/nbt-aad-pc-*; do
         token=${target#"$SOURCE_ROOT"/nbt-aad-pc-}
         [ "${#token}" -eq 32 ] || continue
         case "$token" in *[!a-f0-9]*) continue ;; esac
-        exists "$target" && echo "$target"
+        if exists "$target"; then echo "$target"; fi
     done
     return 0
 }
@@ -534,7 +534,7 @@ if [ "$REMOVE_MODE" = purge ]; then
         [ -n "$target" ] || continue
         say "Erasing: $target"
         rm -rf "$target" || die "Cleanup incomplete: $target. Retry uninstall --purge."
-        exists "$target" && die "Cleanup incomplete: $target"
+        if exists "$target"; then die "Cleanup incomplete: $target"; fi
     done <<EOF
 $purge_list
 EOF
