@@ -87,7 +87,7 @@ def open_ssh(connection, settings, state, confirm, log, *, finder=find_ssh,
     existing = finder(connection.host, gateway, settings.source_ip, connection.port)
     if existing:
         return verifier(replace(connection, host=existing), state, confirm, log)
-    log(tr('SSH закрыт. Открываем доступ автоматически. Сохраняйте питание ГУ, ENET и интернет.'))
+    log(tr('SSH не найден. Проверяем связь с ГУ перед открытием доступа.'))
     activator(replace(settings, gateway=gateway), log)
     for attempt, delay in enumerate((2.5, 1.5, 1.5), 1):
         sleeper(delay)
@@ -95,5 +95,5 @@ def open_ssh(connection, settings, state, confirm, log, *, finder=find_ssh,
         host = finder(connection.host, gateway, settings.source_ip, connection.port)
         if host:
             return verifier(replace(connection, host=host), state, confirm, log)
-    raise RelayError(with_enet_hint(tr('После открытия доступа SSH на ГУ не найден. Операция остановлена. '
-                                   'Проверьте IP и журнал.')))
+    raise RelayError(with_enet_hint(tr('Запрос выполнен, но SSH на ГУ не найден. Операция остановлена. '
+                                      'Проверьте IP головного устройства и маршрут через ENET.'), retrofit=True))

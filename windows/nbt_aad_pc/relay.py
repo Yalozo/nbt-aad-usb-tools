@@ -139,6 +139,54 @@ def connect_car(host, port, source_ip='', timeout=6):
                                     source_address=(source_ip, 0) if source_ip else None)
 
 
+def _read_exact(sock, size, deadline):
+    data = bytearray()
+    while len(data) < size:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        sock.settimeout(remaining)
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError
+        data.extend(chunk)
+    return bytes(data)
+
+
+def _verify_head_unit_response(gateway, source_ip, connector, timeout=6):
+    try:
+        car = connector(gateway, 6801, source_ip, timeout=timeout)
+    except OSError as exc:
+        raise RelayError(with_enet_hint(tr('Не удалось подключиться к диагностике автомобиля.'))) from exc
+    no_reply = with_enet_hint(tr('Диагностический шлюз доступен, но ГУ по адресу 0x63 не ответило. '
+                                 'Запрос на открытие SSH не отправлен.'), retrofit=True)
+    try:
+        with car:
+            # ReadDataByIdentifier F190, tester F4 to HU 63. Keep the reply local.
+            car.sendall(struct.pack('>IH', 5, 1) + bytes.fromhex('f4 63 22 f1 90'))
+            deadline = time.monotonic() + timeout
+            while True:
+                length, control = struct.unpack('>IH', _read_exact(car, 6, deadline))
+                if length > MAX_HSFZ_BODY:
+                    raise RelayError(tr('Недопустимая длина HSFZ: ') + str(length))
+                payload = _read_exact(car, length, deadline)
+                if control in (0x43, 0x45):  # Target unreachable or diagnostics not ready.
+                    break
+                if control != 1 or payload[:2] != b'\x63\xf4':
+                    continue  # ACK, request echo, or a frame for another ECU/tester.
+                uds = payload[2:]
+                if len(uds) > 3 and uds.startswith(b'\x62\xf1\x90'):
+                    return
+                if len(uds) == 3 and uds[:2] == b'\x7f\x22':
+                    if uds[2] == 0x25:  # The gateway reports no response from the target.
+                        break
+                    if uds[2] != 0x78:  # A final NRC still shows that the ECU replied.
+                        return
+    except OSError as exc:
+        raise RelayError(no_reply) from exc
+    raise RelayError(no_reply)
+
+
 def discover_gateway(source_ip='', timeout=3, socket_factory=socket.socket):
     ipv4(source_ip, optional=True)
     # The default is the conventional ENET link-local broadcast. A specified source
@@ -180,12 +228,15 @@ def activate(settings, log=lambda message: None, *, ws_factory=websocket.create_
     settings.validate()
     gateway = settings.gateway or gateway_finder(settings.source_ip)
     log(tr('Диагностический шлюз BMW: %s:6801.') % gateway)
+    _verify_head_unit_response(gateway, settings.source_ip, car_factory)
+    log(tr('Головное устройство ответило на диагностический запрос. Запрашиваем открытие SSH.'))
     decoder, guard = ServerDecoder(), HsfzGuard()
     stop, errors = threading.Event(), queue.Queue()
     ws, car, reader = None, None, None
     outcome = None
+    relay_closed = tr('Соединение с сервисом открытия SSH закрылось. Результат открытия SSH не подтверждён.')
     try:
-        # Establish verified WSS before opening the car session or sending any diagnostics.
+        # Use a fresh car socket for the relay after the local diagnostic probe.
         for attempt in range(2):
             try:
                 ws = ws_factory(RELAY_URL, timeout=10, enable_multithread=True,
@@ -239,7 +290,7 @@ def activate(settings, log=lambda message: None, *, ws_factory=websocket.create_
             except websocket.WebSocketTimeoutException:
                 continue
             if opcode == websocket.ABNF.OPCODE_CLOSE:
-                raise RelayError(tr('Соединение закрылось. Результат открытия SSH не подтверждён.'))
+                raise RelayError(relay_closed)
             if opcode in (websocket.ABNF.OPCODE_PING, websocket.ABNF.OPCODE_PONG):
                 continue
             if opcode != websocket.ABNF.OPCODE_BINARY:
@@ -263,6 +314,8 @@ def activate(settings, log=lambda message: None, *, ws_factory=websocket.create_
                                            'Запрос автоматически не повторяется.')))
         log(tr('Запрос открытия SSH выполнен. Проверяем вход.'))
         return gateway
+    except websocket.WebSocketConnectionClosedException as exc:
+        raise RelayError(relay_closed) from exc
     except (OSError, websocket.WebSocketException) as exc:
         raise RelayError(tr('Результат открытия SSH не подтверждён (') + type(exc).__name__ +
                          tr('). Проверьте интернет и ENET.')) from exc

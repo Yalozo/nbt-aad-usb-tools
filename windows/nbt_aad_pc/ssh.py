@@ -19,9 +19,12 @@ class RemoteExitError(RemoteError):
         super().__init__(tr('Команда ГУ не завершилась успешно (код %s). %s') % (code, detail))
 
 
-def with_enet_hint(message):
-    return (message + tr('\n\nПроверьте подключение кабеля ENET к автомобилю '
-            'и убедитесь, что зажигание включено.'))
+def with_enet_hint(message, *, retrofit=False):
+    message += tr('\n\nПроверьте подключение кабеля ENET к автомобилю '
+                  'и убедитесь, что зажигание включено.')
+    if retrofit:
+        message += tr('\nЕсли ГУ доустановлено, проверьте Ethernet-подключение самого ГУ (OABR).')
+    return message
 
 
 def on_omap(node, command):

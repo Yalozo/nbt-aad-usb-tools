@@ -2,7 +2,7 @@
 
 [Русский](README.md) · [Shared app guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/windows/README.en.md)
 
-NBT-AAD PC 0.1.11 with USB installer 0.4.2 installs wireless Android Auto on compatible BMW and MINI NBT Evo ID5/ID6 head units. It shares its interface and features with the Windows app.
+NBT-AAD PC 0.1.12 with USB installer 0.4.2 installs wireless Android Auto on compatible BMW and MINI NBT Evo ID5/ID6 head units. It shares its interface and features with the Windows app.
 
 ## First launch
 
@@ -15,6 +15,8 @@ NBT-AAD PC 0.1.11 with USB installer 0.4.2 installs wireless Android Auto on com
 The deployment target is macOS 13 Ventura or later. CI builds and tests the Intel and Apple Silicon variants separately on macOS 15 and checks the minimum OS in each bundled Mach-O file.
 
 ## Working with the head unit
+
+Before requesting SSH activation, the app checks for a reply from the head unit to a read-only diagnostic request. If only the gateway responds, no activation request is sent. On retrofits, check the head unit’s Ethernet connection (OABR).
 
 1. Connect the Mac to the vehicle via wired ENET and turn on the ignition. Use a USB Ethernet adapter if needed. The head unit needs Ethernet/OABR, activated CarPlay, and a Wi-Fi antenna. Keep power and ENET connected throughout the file operation.
 2. The app checks SSH before each head-unit action. **If SSH is closed, the Mac needs a stable internet connection so the app can open it automatically.**

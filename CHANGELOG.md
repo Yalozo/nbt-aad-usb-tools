@@ -1,5 +1,10 @@
 # Changes
 
+## Windows/macOS app 0.1.12
+
+- Require a local read-only head unit diagnostic reply before contacting the online SSH activation service.
+- Report missing head unit replies, an interrupted activation connection, and an unreachable SSH port as separate outcomes.
+
 ## Windows/macOS app 0.1.11
 
 - Keep the log path and Send Log button visible when the window shrinks.

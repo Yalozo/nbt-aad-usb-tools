@@ -6,7 +6,7 @@ import struct
 import tempfile
 import threading
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import websocket
 from nbt_aad_pc.controller import Connection
@@ -16,8 +16,24 @@ from nbt_aad_pc.relay import (BLOCKED_UDS, HsfzGuard, MAX_RELAY_BODY, RelayError
 from nbt_aad_pc.unlocker import find_ssh, open_ssh, verify
 
 
-def hsfz(uds=b'\x22\xf1\x90', source=0xf4, target=0x63):
-    return struct.pack('>IHBB', len(uds) + 2, 1, source, target) + uds
+def hsfz(uds=b'\x22\xf1\x90', source=0xf4, target=0x63, control=1):
+    return struct.pack('>IHBB', len(uds) + 2, control, source, target) + uds
+
+
+def probe_socket(*frames):
+    data = bytearray(b''.join(frames))
+    sock = MagicMock()
+    sock.__enter__.return_value = sock
+
+    def recv(limit):
+        # Exercise TCP fragmentation even when several frames arrive together.
+        count = min(limit, 3)
+        chunk = bytes(data[:count])
+        del data[:count]
+        return chunk
+
+    sock.recv.side_effect = recv
+    return sock
 
 
 class ProtocolTests(unittest.TestCase):
@@ -100,11 +116,13 @@ class RelayBridgeTests(unittest.TestCase):
         self.ws = FakeWebSocket()
         self.client, self.vehicle = socket.socketpair()
         self.vehicle.settimeout(2)
+        self.addCleanup(self.client.close)
         self.addCleanup(self.vehicle.close)
         self.logs = []
         self.factory = Mock(return_value=self.ws)
         self.settings = RelaySettings('127.0.0.1')
-        self.car_factory = Mock(return_value=self.client)
+        self.probe = probe_socket(hsfz(b'\x62\xf1\x90TEST', source=0x63, target=0xf4))
+        self.car_factory = Mock(side_effect=[self.probe, self.client])
 
     def run_relay(self, **kwargs):
         return activate(self.settings, self.logs.append, ws_factory=self.factory,
@@ -148,6 +166,46 @@ class RelayBridgeTests(unittest.TestCase):
         self.assertTrue(Path(options['sslopt']['ca_certs']).is_file())
         self.assertEqual(options['redirect_limit'], 0)
 
+    def test_preflight_ignores_ack_echo_and_other_ecus_and_waits_for_head_unit(self):
+        probe = probe_socket(hsfz(control=2), hsfz(),
+                             hsfz(b'\x62\xf1\x90OTHER', source=0x10, target=0xf4),
+                             hsfz(b'\x7f\x22\x78', source=0x63, target=0xf4),
+                             hsfz(b'\x7f\x22\x31', source=0x63, target=0xf4))
+        self.settings = RelaySettings('169.254.199.1', '169.254.199.50')
+        self.car_factory.side_effect = [probe, self.client]
+        self.ws.received.put(b'\x83\x01')
+        self.factory.side_effect = lambda *args, **kwargs: self._after_probe(probe)
+        self.assertEqual(self.run_relay(), '169.254.199.1')
+        self.assertEqual(self.car_factory.call_args_list,
+                         [call('169.254.199.1', 6801, '169.254.199.50', timeout=6)] * 2)
+        self.assertEqual(self.ws.sent, list(hello_frames()))
+
+    def _after_probe(self, probe):
+        probe.sendall.assert_called_once_with(hsfz())
+        probe.__exit__.assert_called_once()
+        return self.ws
+
+    def test_gateway_ack_without_head_unit_reply_stops_before_online_request(self):
+        for frames in (
+                (hsfz(control=2),),
+                (hsfz(b'\x62\xf1\x90OTHER', source=0x10, target=0xf4),),
+                (hsfz(b'\x7f\x22\x78', source=0x63, target=0xf4),),
+                (hsfz(b'\x7f\x22\x25', source=0x63, target=0xf4),),
+                (struct.pack('>IH', 0, 0x43),)):
+            with self.subTest(frames=frames):
+                probe = probe_socket(*frames)
+                self.car_factory.reset_mock(side_effect=True)
+                self.car_factory.side_effect = [probe]
+                with self.assertRaisesRegex(RelayError, 'шлюз доступен, но ГУ.*не ответило') as error:
+                    self.run_relay()
+                self.assertIn('OABR', str(error.exception))
+                self.assertIn('Запрос на открытие SSH не отправлен', str(error.exception))
+                probe.sendall.assert_called_once_with(hsfz())
+                probe.__exit__.assert_called_once()
+                self.car_factory.assert_called_once()
+                self.factory.assert_not_called()
+                self.assertFalse(self.ws.sent)
+
     def test_remote_failure_is_not_success_and_attempt_is_not_repeated(self):
         self.ws.received.put(b'\x83\0')
         with self.assertRaisesRegex(RelayError, 'отказ'):
@@ -163,7 +221,7 @@ class RelayBridgeTests(unittest.TestCase):
             self.assertEqual(self.run_relay(), '127.0.0.1')
         sleep.assert_called_once()
         self.assertEqual(self.factory.call_count, 2)
-        self.car_factory.assert_called_once()
+        self.assertEqual(self.car_factory.call_count, 2)
         self.assertEqual(self.ws.sent, list(hello_frames()))
 
     def test_timeout_without_completion_is_not_success(self):
@@ -173,8 +231,10 @@ class RelayBridgeTests(unittest.TestCase):
 
     def test_server_close_does_not_count_as_completion(self):
         self.ws.received.put(websocket.WebSocketConnectionClosedException('closed'))
-        with self.assertRaisesRegex(RelayError, 'не подтверждён'):
+        with self.assertRaisesRegex(RelayError, 'с сервисом открытия SSH закрылось.*не подтверждён'):
             self.run_relay()
+        self.assertEqual(self.ws.sent, list(hello_frames()))
+        self.factory.assert_called_once()
 
     def test_blocked_data_is_never_written_to_vehicle(self):
         self.ws.received.put(field(0x81, hsfz(BLOCKED_UDS)))
@@ -187,12 +247,14 @@ class RelayBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(RelayError, 'неполным'):
             self.run_relay()
 
-    def test_tls_failure_never_opens_vehicle_or_sends_hello(self):
+    def test_tls_failure_never_opens_relay_vehicle_socket_or_sends_hello(self):
         self.factory.side_effect = ssl.SSLCertVerificationError('test CA mismatch')
         with self.assertRaises(RelayError) as error:
             self.run_relay()
         self.assertNotIn('зажигание', str(error.exception))
-        self.car_factory.assert_not_called()
+        self.car_factory.assert_called_once()
+        self.probe.sendall.assert_called_once_with(hsfz())
+        self.probe.__exit__.assert_called_once()
         self.assertFalse(self.ws.sent)
         self.client.close()
 
@@ -201,6 +263,7 @@ class RelayBridgeTests(unittest.TestCase):
         self.addCleanup(self.client.close)
         with self.assertRaisesRegex(RelayError, 'кабеля ENET к автомобилю.*зажигание включено'):
             self.run_relay()
+        self.factory.assert_not_called()
         self.assertFalse(self.ws.sent)
 
 
@@ -236,6 +299,7 @@ class ActivationFlowTests(unittest.TestCase):
         with self.assertRaisesRegex(RelayError, 'SSH на ГУ не найден') as error:
             self.call(Mock(return_value=None))
         self.assertIn('зажигание включено', str(error.exception))
+        self.assertIn('OABR', str(error.exception))
         self.activator.assert_called_once()
         self.verifier.assert_not_called()
         self.assertEqual(self.sleep.call_count, 3)

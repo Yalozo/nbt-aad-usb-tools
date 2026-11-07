@@ -62,6 +62,10 @@ class ActualNetworkBridgeTest(unittest.TestCase):
             endpoint = listener.getsockname()
             command = struct.pack('>IHBB', 5, 1, 0xf4, 0x63) + b'\x22\xf1\x90'
             reply = struct.pack('>IHBB', 6, 1, 0x63, 0xf4) + b'\x62\xf1\x90X'
+            probe_client, probe_server = socket.socketpair()
+            probe_server.settimeout(5)
+            self.addCleanup(probe_client.close)
+            self.addCleanup(probe_server.close)
             car_client, car_server = socket.socketpair()
             car_server.settimeout(5)
             self.addCleanup(car_server.close)
@@ -98,6 +102,12 @@ class ActualNetworkBridgeTest(unittest.TestCase):
 
             def vehicle():
                 try:
+                    self.assertEqual(read_exact(probe_server, len(command)), command)
+                    # The locally read identifier must never reach the online relay.
+                    identifier = b'PRIVATE'
+                    probe_server.sendall(struct.pack('>IHBB', 5 + len(identifier), 1, 0x63, 0xf4)
+                                         + b'\x62\xf1\x90' + identifier)
+                    self.assertEqual(probe_server.recv(1), b'')
                     self.assertEqual(read_exact(car_server, len(command)), command)
                     car_server.sendall(reply)
                 except Exception as exc:
@@ -116,8 +126,9 @@ class ActualNetworkBridgeTest(unittest.TestCase):
                 options['http_no_proxy'] = ['127.0.0.1']
                 return websocket.create_connection('wss://127.0.0.1:%s/' % endpoint[1], **options)
 
+            vehicle_sockets = iter((probe_client, car_client))
             result = activate(RelaySettings('127.0.0.1'), ws_factory=local_ws,
-                              car_factory=lambda *args, **kwargs: car_client, timeout=5)
+                              car_factory=lambda *args, **kwargs: next(vehicle_sockets), timeout=5)
             self.assertEqual(result, '127.0.0.1')
             for thread in (server_thread, car_thread):
                 thread.join(5)

@@ -2,7 +2,7 @@
 
 [Русский](README.md) · [macOS guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/macos/README.en.md)
 
-NBT-AAD PC 0.1.11 bundles USB installer 0.4.2. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
+NBT-AAD PC 0.1.12 bundles USB installer 0.4.2. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
 
 ## Getting started
 
@@ -16,6 +16,8 @@ NBT-AAD PC 0.1.11 bundles USB installer 0.4.2. It installs, updates, and removes
 The vehicle needs activated CarPlay, a Wi-Fi antenna, and working Ethernet/OABR to the head unit. NBT Evo ID4 flashed to ID5/ID6 needs separate testing. The app targets NBT Evo. It leaves CarPlay activation, FSC, coding, and firmware alone.
 
 ## SSH and releases
+
+Before requesting SSH activation, the app sends a read-only diagnostic request to head unit address `0x63` over ENET. The precheck reply stays on the PC and is kept out of the log. If the gateway is reachable but the head unit does not reply, activation stops before contacting the online service. On retrofits, check the head unit’s Ethernet connection (OABR). A diagnostic reply alone does not confirm that the SSH port is reachable.
 
 Opening closed SSH uses an external online service. Head unit diagnostic responses sent to that service may include the VIN and module information. The root password is used to log in directly to the head unit. The operation stops if activation is declined. If the initial network connection drops, it may retry once before sending the diagnostic request.
 
