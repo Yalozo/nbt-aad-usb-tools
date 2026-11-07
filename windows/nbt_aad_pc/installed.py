@@ -2,6 +2,7 @@
 import hashlib
 import re
 import shlex
+from .ssh import on_omap
 from .releases import FILES, MAX_ASSET, list_local_packages, validate_elf, PackageError
 
 
@@ -15,16 +16,15 @@ def embedded_version(data, plugin=False):
 
 
 def installed_versions(session, node, cache, log):
-    prefix = '/net/hu-omap' if node == 'hu-jacinto' else ''
     paths = {'nbt-aad': '/opt/aa/nbt-aad', **{
         'release/' + name: '/opt/hmi/ID5/data/ro/Plugins/NbtAad/' + name for name in FILES}}
     paths['pf_aa'] = '/opt/aa/pf_aa'
     payloads = {}
     for name, path in paths.items():
-        quoted = shlex.quote(prefix + path)
+        quoted = shlex.quote(path)
         # No symlink traversal and no creation of remote scratch files.
         command = 'if test -f ' + quoted + ' && test ! -L ' + quoted + '; then cat ' + quoted + '; fi'
-        payloads[name] = session.run(command, stream=False, max_output=MAX_ASSET, timeout=120)
+        payloads[name] = session.run(on_omap(node, command), stream=False, max_output=MAX_ASSET, timeout=120)
     lines = []
     for name, title, plugin in [('nbt-aad', 'Установленный NBT-AAD', False),
                                  ('release/libNbtAad.so', 'Установленный плагин', True)]:
