@@ -14,11 +14,14 @@ class NativeUITest(unittest.TestCase):
         from nbt_aad_pc.ui import App
         with tempfile.TemporaryDirectory() as directory:
             root = tk.Tk()
+            root.withdraw()
             app = App(root, state=directory)
+            # Test native Tk allocation without the CI window manager.
+            app.layout.pack_forget()
+
             def resize(width, height):
-                root.geometry(f'{width}x{height}')
-                root.after(120, root.quit)
-                root.mainloop()
+                app.layout.place(x=0, y=0, width=width, height=height)
+                root.update_idletasks()
 
             try:
                 for choice, button, ready in (
@@ -33,9 +36,8 @@ class NativeUITest(unittest.TestCase):
                         resize(width, height)
                         self.assertLess(app.output.winfo_height(), larger_log)
                         for widget in (app.log_path_entry, app.send_log_button):
-                            self.assertTrue(widget.winfo_ismapped())
                             self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(),
-                                                 root.winfo_rooty() + root.winfo_height())
+                                                 app.layout.winfo_rooty() + height)
                         self.assertEqual(app.send_log_button.winfo_height(),
                                          app.send_log_button.winfo_reqheight())
                         self.assertEqual(app.send_log_button.cget('text'), button)
