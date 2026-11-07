@@ -1,24 +1,24 @@
 {
   "application": "NBT-AAD PC",
   "platform": "Windows",
-  "version": "0.1.7",
+  "version": "0.1.9",
   "method": "Pillow ImageGrab single-window capture of the running Tk app",
   "head_unit_connected": false,
   "packages": [
     {
-      "id": 434589154,
-      "name": "MOST Refactor Test Build - v1.9.09",
-      "tag_name": "MOST-Refactor-Test",
-      "published_at": "2026-11-04T23:40:04Z",
-      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/MOST-Refactor-Test",
+      "id": 437016300,
+      "name": "USB In Menu - v1.9.33",
+      "tag_name": "Installer",
+      "published_at": "2026-11-06T20:48:47Z",
+      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/Installer",
       "prerelease": false
     },
     {
-      "id": 435660372,
-      "name": "[STABLE]  Volume Slider Fix - v1.9.18",
-      "tag_name": "volsliderfixforreal",
-      "published_at": "2026-11-05T19:53:55Z",
-      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/volsliderfixforreal",
+      "id": 437259776,
+      "name": "v1.9.35-wifisel / rhmiapp-42-wifi",
+      "tag_name": "wifitoggle",
+      "published_at": "2026-11-07T02:13:35Z",
+      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/wifitoggle",
       "prerelease": false
     }
   ]
