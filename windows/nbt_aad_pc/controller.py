@@ -4,6 +4,9 @@ from pathlib import Path
 import re
 import shlex
 import uuid
+
+from paramiko import SSHException
+
 from .releases import PackageError
 from .ssh import RemoteError, RemoteExitError, Session, on_omap
 from .installed import installed_versions
@@ -130,6 +133,15 @@ class Installer:
         try:
             node = detect(session)
             self.log(tr('Проверка ГУ пройдена: ') + node)
+            try:
+                version = session.run(on_omap(node, 'cat /opt/sys/etc/nbt_version.txt'),
+                                      timeout=5, stream=False, max_output=256).strip()
+            except (RemoteError, SSHException):
+                version = b''
+            if re.fullmatch(rb'NBTevo_[a-z0-9][a-z0-9_]{0,63}', version, re.IGNORECASE):
+                self.log(tr('Версия прошивки NBT Evo: ') + version.decode('ascii'))
+            else:
+                self.log(tr('Версию прошивки NBT Evo прочитать не удалось.'))
             if action == 'restart':
                 self.log(tr('Отправка команды перезагрузки ГУ…'))
                 return restart(session, node)

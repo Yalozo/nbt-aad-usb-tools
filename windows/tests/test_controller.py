@@ -14,6 +14,7 @@ class FakeSession:
         self.calls, self.uploads, self.closed = [], {}, False
         self.node = 'hu-omap'
         self.credential_output = b'NBT_AAD_SHELL_PID=42\npid euid\n42 0\n'
+        self.firmware = b'NBTevo_N18032I\r\n'
         self.fail_dry = False
         self.fail_mkdir = False
         self.fail_commit = False
@@ -46,6 +47,10 @@ class FakeSession:
             raise RemoteError('Function not implemented')
         if 'NBT_AAD_SHELL_PID=' in command:
             return self.credential_output
+        if command == 'cat /opt/sys/etc/nbt_version.txt':
+            if self.firmware is None:
+                raise RemoteExitError(1, 'cat: No such file or directory')
+            return self.firmware
         if command.startswith('umask 077; cat > '):
             path, = shlex.split(command.partition(' > ')[2])
             self.uploads[path] = kwargs['data']
@@ -146,10 +151,22 @@ class ControllerTest(unittest.TestCase):
         self.assertFalse(any('могла быть уже удалена' in line for line in self.logs))
 
     def test_status_has_no_staging_upload_or_reset(self):
+        self.session.node = 'hu-jacinto'
         self.execute('status')
+        self.assertIn('Версия прошивки NBT Evo: NBTevo_N18032I', self.logs)
+        self.assertIn('on -f /net/hu-omap /bin/sh -c', self.commands())
         self.assertFalse(self.session.uploads)
         self.assertNotIn('mkdir', self.commands())
         self.assertNotIn('appreset', self.commands())
+
+    def test_missing_or_invalid_firmware_version_does_not_stop_install(self):
+        for value in (None, b'Unexpected output\nNBTevo_N18032I\n'):
+            with self.subTest(value=value):
+                self.session.firmware = value
+                self.logs.clear()
+                self.assertIn('завершены', self.execute(reboot=False))
+                self.assertIn('Версию прошивки NBT Evo прочитать не удалось.', self.logs)
+                self.assertFalse(any('NBTevo_N18032I' in line for line in self.logs))
 
     def test_no_reset_or_cleanup_after_uncertain_commit(self):
         for option in ('fail_dry', 'fail_commit', 'no_success', 'fail_verify'):

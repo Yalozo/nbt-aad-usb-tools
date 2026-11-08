@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 import ipaddress
 import queue
+import re
 import socket
 import ssl
 import struct
@@ -153,6 +154,13 @@ def _read_exact(sock, size, deadline):
     return bytes(data)
 
 
+def _parse_vin(value):
+    vin = value.strip(b'\x00 \t\r\n').upper()
+    if vin != b'0' * 17 and re.fullmatch(rb'[A-HJ-NPR-Z0-9]{17}', vin):
+        return vin.decode('ascii')
+    return None
+
+
 def _verify_head_unit_response(gateway, source_ip, connector, timeout=6):
     try:
         car = connector(gateway, 6801, source_ip, timeout=timeout)
@@ -176,18 +184,18 @@ def _verify_head_unit_response(gateway, source_ip, connector, timeout=6):
                     continue  # ACK, request echo, or a frame for another ECU/tester.
                 uds = payload[2:]
                 if len(uds) > 3 and uds.startswith(b'\x62\xf1\x90'):
-                    return
+                    return _parse_vin(uds[3:])
                 if len(uds) == 3 and uds[:2] == b'\x7f\x22':
                     if uds[2] == 0x25:  # The gateway reports no response from the target.
                         break
                     if uds[2] != 0x78:  # A final NRC still shows that the ECU replied.
-                        return
+                        return None
     except OSError as exc:
         raise RelayError(no_reply) from exc
     raise RelayError(no_reply)
 
 
-def discover_gateway(source_ip='', timeout=3, socket_factory=socket.socket):
+def discover_gateway(source_ip='', timeout=3, socket_factory=socket.socket, *, log=lambda _: None):
     ipv4(source_ip, optional=True)
     # The default is the conventional ENET link-local broadcast. A specified source
     # also gets limited broadcast on its chosen interface, useful with DHCP adapters.
@@ -209,26 +217,32 @@ def discover_gateway(source_ip='', timeout=3, socket_factory=socket.socket):
                 break
             if len(response) < 6 or response[4:6] != b'\x00\x11':
                 continue
-            identification = response[6:].decode('latin1', errors='replace')
-            if 'DIAGADR10' not in identification or 'BMWVIN' not in identification:
+            identification = response[6:]
+            if b'DIAGADR10' not in identification or b'BMWVIN' not in identification:
                 continue
             host = ipv4(peer[0])
-            found[host] = identification
+            vin = _parse_vin(identification.partition(b'BMWVIN')[2])
+            found[host] = vin or found.get(host)
     if not found:
         raise RelayError(with_enet_hint(tr('Автомобиль не ответил на поиск шлюза BMW.')))
     if len(found) != 1:
         raise RelayError(tr('Шлюз BMW не найден однозначно. Укажите IP диагностики вручную; '
                          'при необходимости также IPv4 Ethernet-адаптера ПК.'))
-    return next(iter(found))
+    (gateway, vin), = found.items()
+    if vin:
+        log(tr('VIN автомобиля (шлюз BMW): ') + vin)
+    return gateway
 
 
 def activate(settings, log=lambda message: None, *, ws_factory=websocket.create_connection,
              car_factory=connect_car, gateway_finder=discover_gateway, timeout=75):
     """Attempt SSH activation once. The caller verifies SSH separately."""
     settings.validate()
-    gateway = settings.gateway or gateway_finder(settings.source_ip)
+    gateway = settings.gateway or gateway_finder(settings.source_ip, log=log)
     log(tr('Диагностический шлюз BMW: %s:6801.') % gateway)
-    _verify_head_unit_response(gateway, settings.source_ip, car_factory)
+    vin = _verify_head_unit_response(gateway, settings.source_ip, car_factory)
+    if vin:
+        log(tr('VIN, записанный в ГУ: ') + vin)
     log(tr('Головное устройство ответило на диагностический запрос. Запрашиваем открытие SSH.'))
     decoder, guard = ServerDecoder(), HsfzGuard()
     stop, errors = threading.Event(), queue.Queue()

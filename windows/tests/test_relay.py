@@ -355,12 +355,19 @@ class DiscoveryTests(unittest.TestCase):
         fake = Mock()
         fake.__enter__ = Mock(return_value=fake)
         fake.__exit__ = Mock(return_value=False)
+        def response(address, vin):
+            payload = b'DIAGADR' + address + b'BMWMACAABBCCDDEEFFBMWVIN' + vin
+            return struct.pack('>IH', len(payload), 0x11) + payload
+
         fake.recvfrom.side_effect = [
-            (struct.pack('>IH', 0, 0x11) + b'DIAGADR63BMWVINTEST0000000000000', ('169.254.199.119', 6811)),
-            (struct.pack('>IH', 0, 0x11) + b'DIAGADR10BMWVINTEST0000000000000', ('169.254.199.1', 6811)),
+            (response(b'63', b'WBA00000000000001'), ('169.254.199.119', 6811)),
+            (response(b'10', b'WBA00000000000002'), ('169.254.199.1', 6811)),
+            (response(b'10', b'short'), ('169.254.199.1', 6811)),
             socket.timeout()]
-        self.assertEqual(discover_gateway('169.254.199.50', socket_factory=Mock(return_value=fake)),
-                         '169.254.199.1')
+        log = Mock()
+        self.assertEqual(discover_gateway('169.254.199.50', socket_factory=Mock(return_value=fake),
+                                          log=log), '169.254.199.1')
+        log.assert_called_once_with('VIN автомобиля (шлюз BMW): WBA00000000000002')
         fake.bind.assert_called_once_with(('169.254.199.50', 0))
 
     def test_public_gateway_is_rejected_before_any_connection(self):

@@ -69,7 +69,8 @@ class ActualNetworkBridgeTest(unittest.TestCase):
             car_client, car_server = socket.socketpair()
             car_server.settimeout(5)
             self.addCleanup(car_server.close)
-            failures, seen = [], []
+            failures, seen, logs = [], [], []
+            vin = b'WBA00000000000001'
 
             def server():
                 try:
@@ -104,9 +105,8 @@ class ActualNetworkBridgeTest(unittest.TestCase):
                 try:
                     self.assertEqual(read_exact(probe_server, len(command)), command)
                     # The locally read identifier must never reach the online relay.
-                    identifier = b'PRIVATE'
-                    probe_server.sendall(struct.pack('>IHBB', 5 + len(identifier), 1, 0x63, 0xf4)
-                                         + b'\x62\xf1\x90' + identifier)
+                    probe_server.sendall(struct.pack('>IHBB', 5 + len(vin), 1, 0x63, 0xf4)
+                                         + b'\x62\xf1\x90' + vin)
                     self.assertEqual(probe_server.recv(1), b'')
                     self.assertEqual(read_exact(car_server, len(command)), command)
                     car_server.sendall(reply)
@@ -127,9 +127,10 @@ class ActualNetworkBridgeTest(unittest.TestCase):
                 return websocket.create_connection('wss://127.0.0.1:%s/' % endpoint[1], **options)
 
             vehicle_sockets = iter((probe_client, car_client))
-            result = activate(RelaySettings('127.0.0.1'), ws_factory=local_ws,
+            result = activate(RelaySettings('127.0.0.1'), logs.append, ws_factory=local_ws,
                               car_factory=lambda *args, **kwargs: next(vehicle_sockets), timeout=5)
             self.assertEqual(result, '127.0.0.1')
+            self.assertIn('VIN, записанный в ГУ: ' + vin.decode('ascii'), logs)
             for thread in (server_thread, car_thread):
                 thread.join(5)
                 self.assertFalse(thread.is_alive())

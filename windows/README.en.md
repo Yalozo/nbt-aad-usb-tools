@@ -2,7 +2,7 @@
 
 [Русский](README.md) · [macOS guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/macos/README.en.md)
 
-NBT-AAD PC 0.1.12 bundles USB installer 0.4.2. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
+NBT-AAD PC 0.1.13 bundles USB installer 0.4.2. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
 
 ## Getting started
 
@@ -17,7 +17,7 @@ The vehicle needs activated CarPlay, a Wi-Fi antenna, and working Ethernet/OABR 
 
 ## SSH and releases
 
-Before requesting SSH activation, the app sends a read-only diagnostic request to head unit address `0x63` over ENET. The precheck reply stays on the PC and is kept out of the log. If the gateway is reachable but the head unit does not reply, activation stops before contacting the online service. On retrofits, check the head unit’s Ethernet connection (OABR). A diagnostic reply alone does not confirm that the SSH port is reachable.
+Before requesting SSH activation, the app sends a read-only diagnostic request to head unit address `0x63` over ENET. The precheck reply stays on the PC. The log records the head unit VIN if present. If the gateway is reachable but the head unit does not reply, activation stops before contacting the online service. On retrofits, check the head unit’s Ethernet connection (OABR). A diagnostic reply alone does not confirm that the SSH port is reachable.
 
 Opening closed SSH uses an external online service. Head unit diagnostic responses sent to that service may include the VIN and module information. The root password is used to log in directly to the head unit. The operation stops if activation is declined. If the initial network connection drops, it may retry once before sending the diagnostic request.
 
@@ -36,6 +36,8 @@ Normally you can leave **Diagnostic IP** and **ENET adapter IPv4** blank. If dis
 Uninstall and Full Cleanup need no release download. The restart checkbox applies to both. If cleanup stops partway through, review the log and retry after addressing the reported error. Removed backups cannot be recovered by the installer.
 
 ## Logs and troubleshooting
+
+The log includes the vehicle VIN from gateway discovery when available. The VIN returned by the head unit during the precheck is logged separately. A retrofitted unit may have a different VIN. After SSH login, the app reads the NBT Evo firmware version from the head unit. Send Log attaches the log with these entries.
 
 Check the ENET cable and ignition if the app cannot reach the vehicle. If automatic SSH activation fails, also check that the PC still has stable internet access.
 

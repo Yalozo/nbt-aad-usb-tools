@@ -2,7 +2,7 @@
 
 [Русский](README.md) · [Shared app guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/windows/README.en.md)
 
-NBT-AAD PC 0.1.12 with USB installer 0.4.2 installs wireless Android Auto on compatible BMW and MINI NBT Evo ID5/ID6 head units. It shares its interface and features with the Windows app.
+NBT-AAD PC 0.1.13 with USB installer 0.4.2 installs wireless Android Auto on compatible BMW and MINI NBT Evo ID5/ID6 head units. It shares its interface and features with the Windows app.
 
 ## First launch
 
@@ -30,6 +30,8 @@ If discovery uses the wrong adapter, find the ENET adapter's IPv4 address in **S
 **Status** reads installed versions and compares the files to the local library. **Restart Head Unit** works independently of installation. **Uninstall** keeps settings and backups. **Full Cleanup** removes NBT-AAD, its settings, and installer backups after confirmation. [Manual recovery](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/docs/RECOVERY.en.md)
 
 ## Local data and building
+
+The log includes the vehicle VIN from gateway discovery when available. The VIN returned by the head unit during the precheck is logged separately. A retrofitted unit may have a different VIN. After SSH login, the app reads the NBT Evo firmware version from the head unit. Send Log attaches the log with these entries.
 
 The app stores `packages`, `logs`, `settings.json`, and `known_hosts` in `~/Library/Application Support/NBT-AAD-PC/`. It remembers the language and connection settings. The root password is not saved. The log path and **Send Log** remain below the scrollable log. The button prepares a mail draft with the current log attached. Removing the app bundle or cleaning up NBT-AAD on the head unit preserves the Mac's library and logs.
 

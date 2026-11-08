@@ -1,5 +1,10 @@
 # Changes
 
+## Windows/macOS app 0.1.13
+
+- Log the vehicle VIN from gateway discovery and the head unit VIN from its diagnostic reply when available.
+- Read and log the NBT Evo firmware version after successful SSH verification.
+
 ## Windows/macOS app 0.1.12
 
 - Require a local read-only head unit diagnostic reply before contacting the online SSH activation service.

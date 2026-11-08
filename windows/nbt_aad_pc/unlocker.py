@@ -81,7 +81,7 @@ def open_ssh(connection, settings, state, confirm, log, *, finder=find_ssh,
     if connection.port != 22:
         raise RelayError(tr('Для автоматического открытия SSH укажите стандартный порт 22.'))
     try:
-        gateway = settings.gateway or gateway_finder(settings.source_ip)
+        gateway = settings.gateway or gateway_finder(settings.source_ip, log=log)
     except OSError as exc:
         raise RelayError(with_enet_hint(tr('Не удалось выполнить поиск автомобиля по ENET: ') + str(exc))) from exc
     existing = finder(connection.host, gateway, settings.source_ip, connection.port)
