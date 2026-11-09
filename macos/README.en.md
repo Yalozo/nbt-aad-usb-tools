@@ -2,7 +2,7 @@
 
 [Русский](README.md) · [Shared app guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/windows/README.en.md)
 
-NBT-AAD PC 0.1.13 with USB installer 0.4.2 installs wireless Android Auto on compatible BMW and MINI NBT Evo ID5/ID6 head units. It shares its interface and features with the Windows app.
+NBT-AAD PC 0.1.14 with USB installer 0.4.2 installs wireless Android Auto on compatible BMW and MINI NBT Evo ID5/ID6 head units. It shares its interface and features with the Windows app.
 
 ## First launch
 

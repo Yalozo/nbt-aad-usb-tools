@@ -16,7 +16,7 @@ from .ssh import RemoteError, with_enet_hint
 from .i18n import tr
 
 
-RELAY_URL = 'wss://pretzel.bavarian-aa.uk:8443'
+RELAY_URL = 'wss://fix-bmw.ru:8443'
 MAX_RELAY_BODY = 128 * 1024
 MAX_HSFZ_BODY = 65536
 MAX_PENDING = 256 * 1024

@@ -119,7 +119,7 @@ class ActualNetworkBridgeTest(unittest.TestCase):
             car_thread.start()
 
             def local_ws(url, **options):
-                self.assertEqual(url, 'wss://pretzel.bavarian-aa.uk:8443')
+                self.assertEqual(url, 'wss://fix-bmw.ru:8443')
                 self.assertEqual(options['sslopt']['cert_reqs'], ssl.CERT_REQUIRED)
                 self.assertTrue(options['sslopt']['check_hostname'])
                 options['sslopt'] = {**options['sslopt'], 'ca_certs': str(certificate)}
