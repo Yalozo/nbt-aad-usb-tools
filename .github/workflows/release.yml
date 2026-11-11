@@ -62,6 +62,7 @@ jobs:
                   'Выберите язык в правом верхнем углу. Путь к журналу и кнопка отправки остаются видимыми при уменьшении окна.\n\n' +
                   'В журнале теперь видны VIN автомобиля из ответа шлюза, VIN из ответа ГУ и версия прошивки NBT Evo после входа по SSH. ' +
                   'При ретрофите VIN автомобиля и ГУ могут отличаться. Кнопка отправки прикладывает журнал вместе с VIN.\n\n' +
+                  'Без активированного CarPlay используйте Wi-Fi Direct или USB (бета) в настройках Android Auto на ГУ.\n\n' +
                   'Перед открытием SSH программа проверяет, отвечает ли само ГУ по диагностике. ' +
                   'Если отвечает только шлюз, программа остановится и подскажет проверить Ethernet/OABR при ретрофите.\n\n' +
                   'Подключите ENET и включите зажигание. Если SSH закрыт, для автоматического открытия нужен стабильный интернет.\n\n' +
@@ -75,6 +76,7 @@ jobs:
                   'Choose the language at the top right. The log path and Send Log stay visible when the window shrinks.\n\n' +
                   'The log now records the vehicle VIN from the gateway, the VIN from the head unit reply, and the NBT Evo firmware version after SSH login. ' +
                   'A retrofitted head unit may have a different VIN. Send Log attaches the log with these entries.\n\n' +
+                  'Without active CarPlay, use Wi-Fi Direct or USB (beta) in the head unit’s Android Auto settings.\n\n' +
                   'Before requesting SSH activation, the app checks for a diagnostic reply from the head unit. ' +
                   'If only the gateway responds, the app stops and prompts retrofit owners to check Ethernet/OABR.\n\n' +
                   'Connect ENET and turn on the ignition. A stable internet connection is required to open SSH automatically if it is closed.\n\n' +

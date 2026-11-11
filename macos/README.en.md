@@ -2,7 +2,7 @@
 
 [Русский](README.md) · [Shared app guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/windows/README.en.md)
 
-NBT-AAD PC 0.1.14 with USB installer 0.4.2 installs wireless Android Auto on compatible BMW and MINI NBT Evo ID5/ID6 head units. It shares its interface and features with the Windows app.
+NBT-AAD PC 0.1.15 with USB installer 0.4.2 installs wireless Android Auto on compatible BMW and MINI NBT Evo ID5/ID6 head units. It shares its interface and features with the Windows app.
 
 ## First launch
 
@@ -18,7 +18,7 @@ The deployment target is macOS 13 Ventura or later. CI builds and tests the Inte
 
 Before requesting SSH activation, the app checks for a reply from the head unit to a read-only diagnostic request. If only the gateway responds, no activation request is sent. On retrofits, check the head unit’s Ethernet connection (OABR).
 
-1. Connect the Mac to the vehicle via wired ENET and turn on the ignition. Use a USB Ethernet adapter if needed. The head unit needs Ethernet/OABR, activated CarPlay, and a Wi-Fi antenna. Keep power and ENET connected throughout the file operation.
+1. Connect the Mac to the vehicle via wired ENET and turn on the ignition. Use a USB Ethernet adapter if needed. Installation requires Ethernet/OABR and root SSH access to the head unit. Keep power and ENET connected throughout the file operation.
 2. The app checks SSH before each head-unit action. **If SSH is closed, the Mac needs a stable internet connection so the app can open it automatically.**
 3. The default head unit address is `169.254.199.99`, port `22`, with user `root` and password `ts&SK412`. Direct access to `169.254.199.119` also works. Enter your own password if you changed it. Confirm the SSH key of your head unit when prompted.
 4. Select a release or keep the automatic choice. Click **Install / Update**. The app uses a verified downloaded package or downloads it and verifies its SHA-256 hashes. Existing settings are kept.
@@ -28,6 +28,8 @@ Before requesting SSH activation, the app checks for a reply from the head unit 
 If discovery uses the wrong adapter, find the ENET adapter's IPv4 address in **System Settings → Network** and enter it in **ENET adapter IPv4**. If the app cannot reach the vehicle, check the ENET cable and ignition. For details of automatic activation and offline use, see the [shared app guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/windows/README.en.md#ssh-and-releases).
 
 **Status** reads installed versions and compares the files to the local library. **Restart Head Unit** works independently of installation. **Uninstall** keeps settings and backups. **Full Cleanup** removes NBT-AAD, its settings, and installer backups after confirmation. [Manual recovery](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/docs/RECOVERY.en.md)
+
+On compatible NBT-AAD builds without active CarPlay, enable **Use WiFi Direct Network** or **Android Auto over USB (beta)** in the head unit’s Android Auto settings and select **Restart** in its menu. Wi-Fi Direct needs working Wi-Fi and Miracast on the head unit. For USB, use a data cable.
 
 ## Local data and building
 

@@ -182,7 +182,7 @@ ENGLISH = {
     'Проверить релизы': 'Check Releases',
     'Беспроводной Android Auto': 'Wireless Android Auto',
     'BMW и MINI с NBT Evo · бесплатный установщик ': 'BMW and MINI with NBT Evo · free installer ',
-    '\nCarPlay должен быть активирован.': '\nCarPlay must be activated.',
+    '\nБез CarPlay используйте Wi-Fi Direct или USB (бета) в настройках Android Auto.': '\nWithout CarPlay, use Wi-Fi Direct or USB (beta) in the Android Auto settings.',
     'Исходный проект NBT-AAD': 'NBT-AAD project',
     'Мой бортжурнал на Drive2': 'My Drive2 journal',
     'IP головного устройства': 'Head unit IP',

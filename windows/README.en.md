@@ -2,7 +2,7 @@
 
 [Русский](README.md) · [macOS guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/macos/README.en.md)
 
-NBT-AAD PC 0.1.14 bundles USB installer 0.4.2. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
+NBT-AAD PC 0.1.15 bundles USB installer 0.4.2. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
 
 ## Getting started
 
@@ -13,7 +13,9 @@ NBT-AAD PC 0.1.14 bundles USB installer 0.4.2. It installs, updates, and removes
 5. Select a release or keep the automatic choice, then click **Install / Update**. The app uses a verified local copy or downloads the package and verifies its SHA-256 hashes. It stages the files, runs a dry check, and installs them with backups. Existing settings are kept.
 6. With **Restart head unit on success** selected, the app requests a restart after verifying the result. Wait for the standard menu, then open **Media/Radio → Android Auto**. If pairing fails on the first launch, remove the pairing on both the head unit and phone and pair them again.
 
-The vehicle needs activated CarPlay, a Wi-Fi antenna, and working Ethernet/OABR to the head unit. NBT Evo ID4 flashed to ID5/ID6 needs separate testing. The app targets NBT Evo. It leaves CarPlay activation, FSC, coding, and firmware alone.
+Installation requires working Ethernet/OABR and root SSH access to a compatible head unit. NBT Evo ID4 flashed to ID5/ID6 needs separate testing. The app targets NBT Evo. It leaves CarPlay activation, FSC, coding, and firmware alone.
+
+On compatible NBT-AAD builds without active CarPlay, enable **Use WiFi Direct Network** or **Android Auto over USB (beta)** in the head unit’s Android Auto settings and select **Restart** in its menu. Wi-Fi Direct needs working Wi-Fi and Miracast on the head unit. For USB, use a data cable.
 
 ## SSH and releases
 

@@ -14,7 +14,7 @@ Connect the ENET cable and turn on the ignition. Choose **English** or **Рус�
 
 ## USB installation requirements
 
-The manual USB procedure starts from a root SSH session. It also requires working CarPlay with a Wi-Fi antenna and access to the head unit via Ethernet/OABR. The USB script can work offline once SSH is available and the package is on the drive. This project is provided for research use under the terms of the [MIT license](LICENSE).
+The manual USB procedure starts from a root SSH session. It also requires access to the head unit via Ethernet/OABR. On compatible NBT-AAD builds without active CarPlay, enable **Use WiFi Direct Network** or **Android Auto over USB (beta)** in the head unit’s Android Auto settings and select **Restart** in its menu. Wi-Fi Direct needs working Wi-Fi and Miracast on the head unit. For USB, use a data cable. The USB script can work offline once SSH is available and the package is on the drive. This project is provided for research use under the terms of the [MIT license](LICENSE).
 
 ## Prepare a flash drive
 

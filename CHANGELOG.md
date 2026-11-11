@@ -1,5 +1,9 @@
 # Changes
 
+## Windows/macOS app 0.1.15
+
+- Explain how to use compatible NBT-AAD builds without active CarPlay via Wi-Fi Direct or USB (beta).
+
 ## Windows/macOS app 0.1.14
 
 - Use fix-bmw.ru for automatic SSH activation.

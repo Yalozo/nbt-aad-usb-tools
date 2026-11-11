@@ -125,7 +125,7 @@ class App:
         self.localized(ttk.Label(frame), 'BMW и MINI с NBT Evo · бесплатный установщик ',
                        __version__).pack(anchor='w', pady=(2, 8))
         self.localized(ttk.Label(frame, foreground='#526970'), CAR_PREPARATION_NOTE, '\n',
-                       SSH_INTERNET_NOTE, '\nCarPlay должен быть активирован.').pack(anchor='w')
+                       SSH_INTERNET_NOTE, '\nБез CarPlay используйте Wi-Fi Direct или USB (бета) в настройках Android Auto.').pack(anchor='w')
         links = ttk.Frame(frame)
         links.pack(fill='x', pady=(6, 10))
         for title, url in [('Исходный проект NBT-AAD', UPSTREAM), ('Мой бортжурнал на Drive2', DRIVE2)]:
