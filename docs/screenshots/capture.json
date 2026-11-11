@@ -1,24 +1,24 @@
 {
   "application": "NBT-AAD PC",
   "platform": "Windows",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "method": "Pillow ImageGrab single-window capture of the running Tk app",
   "head_unit_connected": false,
   "packages": [
     {
-      "id": 438607035,
-      "name": "Browser Mode Previous/Skip - v1.9.38",
-      "tag_name": "brwsr-ap",
-      "published_at": "2026-11-08T23:52:06Z",
-      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/brwsr-ap",
+      "id": 440856350,
+      "name": "Carplay Compatibility Fixes - v1.9.57",
+      "tag_name": "cp-fix",
+      "published_at": "2026-11-10T20:11:39Z",
+      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/cp-fix",
       "prerelease": false
     },
     {
-      "id": 439337544,
-      "name": "Audio Toggle, Vehicle Speed, Lang Fixes, Gated Media LCI Controls, 6wa - v1.9.42",
-      "tag_name": "multiupdate",
-      "published_at": "2026-11-09T15:57:42Z",
-      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/multiupdate",
+      "id": 441145570,
+      "name": "6WA Cluster Fixes - v1.9.58-cluster157",
+      "tag_name": "cluster",
+      "published_at": "2026-11-11T01:53:31Z",
+      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/cluster",
       "prerelease": false
     }
   ]
