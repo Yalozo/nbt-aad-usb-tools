@@ -1,5 +1,9 @@
 # Changes
 
+## Windows/macOS app 0.1.16
+
+- Add the A4A and REMOTE_HMI coding prerequisite to the Russian and English installer guides included in the Windows and macOS downloads and to the release notes.
+
 ## Windows/macOS app 0.1.15
 
 - Explain how to use compatible NBT-AAD builds without active CarPlay via Wi-Fi Direct or USB (beta).
