@@ -17,6 +17,13 @@ import zipfile
 SOURCE = Path(__file__).resolve().parents[1] / "nbt-aad.sh"
 FILES = ("libNbtAad.so", "NbtAad.manifest", "NbtAad.xml",
          "NbtAad_ALL_Texts.zip", "NbtAad_ALL_Images.zip")
+PF_RULES = (
+    '# Android Auto wireless (NBT-AAD): TCP 5277, both directions, on the CarPlay AP (uap0) and the Wi-Fi Direct group (wfd0)\n'
+    'pass quick on uap0 proto tcp from 172.16.224/24 to 172.16.224.1 port 5277 keep state\n'
+    'pass quick on uap0 proto tcp from 172.16.224.1 to 172.16.224/24 port 5277 keep state\n'
+    'pass quick on wfd0 proto tcp from 172.16.222/24 to 172.16.222.1 port 5277 keep state\n'
+    'pass quick on wfd0 proto tcp from 172.16.222.1 to 172.16.222/24 port 5277 keep state\n'
+)
 
 
 def elf(tag=b"new", machine=40):
@@ -53,6 +60,7 @@ class InstallerTest(unittest.TestCase):
             "RAM": mapped_constant('RAM'),
             "TMP": self.root / 'tmp',
             "PF_FALLBACK": self.root / 'etc/pf.conf',
+            "PFCTL": self.root / 'bin/pfctl',
         }
         for path in self.paths.values():
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,7 +77,7 @@ class InstallerTest(unittest.TestCase):
         self.script = self.root / "nbt-aad.sh"
         self.script.write_text(content)
         self.bin = self.root / "bin"
-        self.bin.mkdir()
+        self.bin.mkdir(exist_ok=True)
         self.calls = self.root / "calls"
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                         TEST_CALLS=str(self.calls), TEST_ROOT=str(self.root),
@@ -78,6 +86,13 @@ class InstallerTest(unittest.TestCase):
         self.stub("id", 'echo forbidden-id >> "$TEST_CALLS"; exit 127')
         self.stub("mount", 'echo mount >> "$TEST_CALLS"; exit "${TEST_MOUNT_RC:-0}"')
         self.stub("sync", 'echo sync >> "$TEST_CALLS"; exit "${TEST_SYNC_RC:-0}"')
+        self.stub('pfctl', '[ "$#" = 3 ] && [ "$1" = -n ] && [ "$2" = -f ] || exit 99\n'
+                  'echo "pfctl ${3##*/}" >> "$TEST_CALLS"\n'
+                  'case "$3" in\n'
+                  '  */pf.conf.cleaned) exit "${TEST_PF_PARSE_STAGED_RC:-0}" ;;\n'
+                  '  */pf.conf) exit "${TEST_PF_PARSE_WRITTEN_RC:-0}" ;;\n'
+                  '  *) exit 98 ;;\n'
+                  'esac')
         self.stub("OnOffDSICommander", 'echo hmi >> "$TEST_CALLS"; exit "${TEST_HMI_RC:-0}"')
         self.stub("on", 'echo on >> "$TEST_CALLS"\n'
                   '[ "$1" = -f ] && [ "$2" = "$TEST_ROOT/net/hu-omap" ] || exit 90\n'
@@ -164,7 +179,7 @@ class InstallerTest(unittest.TestCase):
         self.run_script('install', '--dry-run')
         self.assertEqual(before, self.snapshot())
         result = self.run_script('install')
-        self.assertIn('Network rules are not applied automatically', result.stdout)
+        self.assertIn('Optional pf_aa staged and verified', result.stdout)
         dest = self.paths['AA'] / 'pf_aa'
         self.assertEqual(dest.read_bytes(), helper)
         self.assertEqual(dest.stat().st_mode & 0o777, 0o755)
@@ -174,6 +189,84 @@ class InstallerTest(unittest.TestCase):
         backups = list(self.paths['BACKUPS'].glob('*-uninstall'))
         self.assertEqual(len(backups), 1)
         self.assertEqual((backups[0] / 'aa/pf_aa').read_bytes(), helper)
+
+    def pf_source(self, embedded=False):
+        source = self.paths['SOURCE_ROOT'] / ('nbt-aad-pc-' + 'f' * 32)
+        shutil.copytree(self.usb, source)
+        if not embedded:
+            (source / 'pf_aa').write_bytes(elf(b'pf_aa'))
+        pf = self.paths['FS_ROOT'] / 'etc/pf.conf'
+        pf.parent.mkdir()
+        pf.write_text('block all\n')
+        # Run real shell transactions, but replace the ARM program with an
+        # executable stand-in only when the already verified files go live.
+        self.stub('pf-emulator',
+                  'printf "%s\\n" "$1" >> "$TEST_CALLS"\n'
+                  '[ "$2" = --pf ] && [ "$3" = "$TEST_ROOT/fs/etc/pf.conf" ] || exit 8\n'
+                  'case "$1" in\n'
+                  '  --install|--pf-install)\n'
+                  '    cp "$3" "$TEST_ROOT/opt/aa/pf.bak"\n'
+                  f'    cat <<\'RULES\' >> "$3"\n{PF_RULES}RULES\n'
+                  '    echo NBT_KEEP_PF=1 >> "$TEST_ROOT/opt/aa/nbt-aad.env"\n'
+                  '    exit "${TEST_PF_INSTALL_RC:-0}" ;;\n'
+                  '  --check|--pf-check) exit "${TEST_PF_CHECK_RC:-0}" ;;\n'
+                  '  *) exit 99 ;;\n'
+                  'esac')
+        destination = 'nbt-aad' if embedded else 'pf_aa'
+        mv = shlex.quote(shutil.which('mv'))
+        self.stub('mv', f'{mv} "$@" || exit $?\n'
+                  'case "$1" in */staged-aa) '
+                  f'cp "$TEST_ROOT/bin/pf-emulator" "$2/{destination}" ;; esac')
+        args = ['install', '--source', str(source), '--restart-hmi']
+        if embedded:
+            args.append('--pf-embedded')
+        return args, pf
+
+    def test_ssh_pf_dry_run_skips_writes_then_runs_install_and_check_before_reboot(self):
+        args, pf = self.pf_source()
+        before = self.snapshot()
+        result = self.run_script(*args, '--dry-run')
+        self.assertIn('PF plan', result.stdout)
+        self.assertEqual(before, self.snapshot())
+        self.run_script(*args)
+        calls = self.calls.read_text().splitlines()
+        self.assertLess(calls.index('--install'), calls.index('--check'))
+        self.assertLess(calls.index('--check'), calls.index('hmi'))
+        self.assertIn('5277', pf.read_text())
+        self.assertEqual((self.backup() / 'pf.conf.before').read_text(), 'block all\n')
+        self.assertEqual((self.paths['AA'] / 'nbt-aad.env').read_text(), 'NBT_KEEP_PF=1\n')
+
+    def test_embedded_pf_check_accepts_verified_rules_pending_reboot(self):
+        args, _ = self.pf_source(embedded=True)
+        result = self.run_script(*args, TEST_PF_CHECK_RC='9')
+        self.assertIn('verified on disk', result.stdout)
+        calls = self.calls.read_text().splitlines()
+        self.assertLess(calls.index('--pf-install'), calls.index('--pf-check'))
+        self.assertLess(calls.index('--pf-check'), calls.index('hmi'))
+
+    def test_pf_error_restores_old_application_and_firewall_without_reboot(self):
+        self.old_install()
+        args, pf = self.pf_source()
+        for status in ({'TEST_PF_INSTALL_RC': '5'}, {'TEST_PF_CHECK_RC': '7'}):
+            with self.subTest(status=status):
+                result = self.run_script(*args, ok=False, **status)
+                self.assertIn('Previous pf.conf restored', result.stdout)
+                self.assertNotIn('SUCCESS: install', result.stdout)
+                self.assertEqual(pf.read_text(), 'block all\n')
+                self.assert_old_intact()
+                self.assertEqual((self.paths['AA'] / 'nbt-aad.env').read_text(), 'NBT_VID_DPI=152\n')
+                self.assertNotIn('hmi', self.calls.read_text())
+
+    def test_pf_does_not_commit_when_keep_pf_is_outside_launcher_limit(self):
+        self.old_install()
+        original = ''.join(f'NBT_OPTION_{i}=1\n' for i in range(15))
+        (self.paths['AA'] / 'nbt-aad.env').write_text(original)
+        args, pf = self.pf_source()
+        result = self.run_script(*args, ok=False)
+        self.assertIn('first 15 settings', result.stderr)
+        self.assertEqual(pf.read_text(), 'block all\n')
+        self.assertEqual((self.paths['AA'] / 'nbt-aad.env').read_text(), original)
+        self.assertNotIn('hmi', self.calls.read_text())
 
     def test_invalid_optional_pf_aa_is_rejected_before_remount(self):
         for data in (b'not ARM', elf(machine=62)):
@@ -200,13 +293,65 @@ class InstallerTest(unittest.TestCase):
         conf.write_text('block all\npass quick on uap0 proto tcp to any port 5277 keep state\n')
         before = self.snapshot()
         result = self.run_script('uninstall', '--purge', ok=False)
-        self.assertIn('Restore them with pf_aa --uninstall', result.stderr)
+        self.assertIn('PF backups and all application files are preserved', result.stderr)
         self.assertEqual(before, self.snapshot())
         # A backup alone must not block cleanup after the utility restored pf.conf.
         conf.write_text('block all\n# Android Auto 5277 was removed\n')
         self.run_script('uninstall', '--purge')
         self.assertEqual(conf.read_text(), 'block all\n# Android Auto 5277 was removed\n')
         self.assertFalse(self.paths['AA'].exists())
+
+    def test_purge_undoes_pf_after_install_and_keeps_unrelated_changes(self):
+        for embedded in (False, True):
+            with self.subTest(embedded=embedded):
+                args, conf = self.pf_source(embedded=embedded)
+                self.run_script(*args)
+                local_rules = ('# Local changes made after installation\n'
+                               'pass quick on en0 proto tcp to any port 5277 keep state\n'
+                               'pass quick on uap0 proto tcp to any port 52770 keep state\n')
+                with conf.open('a') as file:
+                    file.write(local_rules)
+                purge = ['uninstall', '--purge', *args[1:4]]
+                before = self.snapshot()
+                result = self.run_script(*purge, '--dry-run')
+                self.assertIn('PF plan: remove the NBT-AAD rules', result.stdout)
+                self.assertEqual(before, self.snapshot())
+                self.calls.write_text('')
+                self.run_script(*purge)
+                self.assertEqual(conf.read_text(), 'block all\n' + local_rules)
+                self.assertFalse(self.paths['BACKUPS'].exists())
+                self.assertFalse(self.paths['AA'].exists())
+                calls = self.calls.read_text().splitlines()
+                self.assertLess(calls.index('pfctl pf.conf.cleaned'), calls.index('pfctl pf.conf'))
+                self.assertLess(calls.index('pfctl pf.conf'), calls.index('hmi'))
+                conf.unlink()
+                conf.parent.rmdir()
+
+    def test_purge_undoes_known_rules_after_the_application_has_been_archived(self):
+        self.old_install()
+        conf = self.paths['PF_FALLBACK']
+        conf.write_text('block all\n' + PF_RULES)
+        self.run_script('uninstall')
+        self.assertFalse(self.paths['AA'].exists())
+        self.run_script('uninstall', '--purge')
+        self.assertEqual(conf.read_text(), 'block all\n')
+        self.assertFalse(self.paths['BACKUPS'].exists())
+
+    def test_purge_keeps_application_and_restores_pf_if_parse_or_commit_fails(self):
+        self.old_install()
+        conf = self.paths['PF_FALLBACK']
+        conf.write_text('block all\n' + PF_RULES)
+        pf_backup = self.paths['AA'] / 'pf.bak'
+        pf_backup.write_text('block all\n')
+        for failure in ('TEST_PF_PARSE_STAGED_RC', 'TEST_PF_PARSE_WRITTEN_RC', 'TEST_SYNC_RC'):
+            with self.subTest(failure=failure):
+                result = self.run_script('uninstall', '--purge', '--restart-hmi', ok=False, **{failure: '1'})
+                self.assertEqual(conf.read_text(), 'block all\n' + PF_RULES)
+                self.assert_old_intact()
+                self.assertTrue(pf_backup.exists())
+                self.assertNotIn('SUCCESS: uninstall', result.stdout)
+                self.assertNotIn('hmi', self.calls.read_text().splitlines())
+                self.assertFalse(self.paths['LOCK'].exists())
 
     def test_purge_keeps_pf_backup_when_system_configuration_cannot_be_inspected(self):
         self.old_install()
@@ -219,6 +364,17 @@ class InstallerTest(unittest.TestCase):
         backup = self.paths['BACKUPS'] / 'old-uninstall/aa'
         backup.mkdir(parents=True)
         (backup / 'pf.bak').write_text('block all\n')
+        conf = self.paths['FS_ROOT'] / 'etc/pf.conf'
+        conf.parent.mkdir()
+        conf.write_text('block all\npass quick on wfd0 proto tcp to any port 5277 keep state\n')
+        before = self.snapshot()
+        self.run_script('uninstall', '--purge', ok=False)
+        self.assertEqual(before, self.snapshot())
+
+    def test_purge_protects_the_exact_pf_snapshot_when_it_is_the_only_backup(self):
+        backup = self.paths['BACKUPS'] / 'failed-install'
+        backup.mkdir(parents=True)
+        (backup / 'pf.conf.before').write_text('block all\n')
         conf = self.paths['FS_ROOT'] / 'etc/pf.conf'
         conf.parent.mkdir()
         conf.write_text('block all\npass quick on wfd0 proto tcp to any port 5277 keep state\n')

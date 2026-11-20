@@ -27,6 +27,11 @@ class RelayError(RemoteError):
     pass
 
 
+class UnknownRelayCommandError(RelayError):
+    def __init__(self, opcode):
+        super().__init__(tr('Неизвестная команда relay: 0x%02X.') % opcode)
+
+
 def ipv4(value, *, optional=False):
     if optional and not value:
         return ''
@@ -87,7 +92,7 @@ class ServerDecoder:
                 events.append(('done', status == 1))
                 break
             if opcode not in (0x81, 0x82):
-                raise RelayError(tr('Неизвестная команда relay: 0x%02X.') % opcode)
+                raise UnknownRelayCommandError(opcode)
             # 0x82 has an extra severity byte preceding its u32 length.
             header = 6 if opcode == 0x82 else 5
             if len(self.pending) < header:

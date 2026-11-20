@@ -1,4 +1,6 @@
 import queue
+import ipaddress
+from functools import partial
 from pathlib import Path
 import socket
 import ssl
@@ -10,10 +12,11 @@ from unittest.mock import MagicMock, Mock, call, patch
 
 import websocket
 from nbt_aad_pc.controller import Connection
-from nbt_aad_pc.relay import (BLOCKED_UDS, HsfzGuard, MAX_RELAY_BODY, RelayError,
+from nbt_aad_pc.relay import (BLOCKED_UDS, HsfzGuard, MAX_RELAY_BODY, RelayError, UnknownRelayCommandError,
                               RelaySettings, ServerDecoder, activate, discover_gateway,
                               field, hello_frames)
-from nbt_aad_pc.unlocker import find_ssh, open_ssh, verify
+from nbt_aad_pc.unlocker import find_local_connection, find_ssh, open_ssh, verify
+from nbt_aad_pc.discovery import LanAddress
 
 
 def hsfz(uds=b'\x22\xf1\x90', source=0xf4, target=0x63, control=1):
@@ -288,6 +291,77 @@ class ActivationFlowTests(unittest.TestCase):
                 self.call(Mock(return_value=self.connection.host))
             self.activator.assert_not_called()
 
+    def test_blank_ips_use_discovered_existing_ssh(self):
+        self.connection.host = ''
+        self.settings = RelaySettings()
+        existing = Connection('192.168.1.107', 22, 'secret', '192.168.1.200')
+        legacy = Mock()
+        result = self.call(legacy, local_connection_finder=Mock(return_value=(existing, '192.168.1.131')))
+        self.assertIs(result, existing)
+        legacy.assert_not_called()
+        self.activator.assert_not_called()
+
+    def test_manual_diagnostic_ip_skips_interface_discovery(self):
+        self.connection.host = ''
+        discover = Mock()
+        self.call(Mock(return_value='169.254.199.99'), local_connection_finder=discover)
+        discover.assert_not_called()
+
+    def test_closed_ssh_keeps_discovered_gateway_and_source_for_activation(self):
+        self.connection.host = ''
+        self.settings = RelaySettings()
+        adapter = LanAddress('Wi-Fi', ipaddress.IPv4Interface('192.168.1.200/24'))
+        discover = Mock(return_value=[('192.168.1.131', adapter)])
+        local = partial(find_local_connection, discover=discover, finder=Mock(return_value=None))
+        finder = Mock(side_effect=[None, None, '169.254.199.119'])
+        legacy_discovery = Mock(side_effect=AssertionError('Selected gateway was lost'))
+
+        result = self.call(finder, local_connection_finder=local, gateway_finder=legacy_discovery)
+
+        self.assertEqual(result.host, '169.254.199.119')
+        self.assertEqual(result.source_ip, '192.168.1.200')
+        activated = self.activator.call_args.args[0]
+        self.assertEqual(activated.gateway, '192.168.1.131')
+        self.assertEqual(activated.source_ip, '192.168.1.200')
+        self.assertTrue(all(row.args[2] == '192.168.1.200' for row in finder.call_args_list))
+        legacy_discovery.assert_not_called()
+
+    def test_lan_gateway_can_have_ssh_at_a_standard_link_local_address(self):
+        adapter = LanAddress('Wi-Fi', ipaddress.IPv4Interface('192.168.1.200/24'))
+        discover = Mock(return_value=[('192.168.1.131', adapter)])
+        probe = Mock(side_effect=lambda host, *_: b'SSH-2.0-QNX_Secure_Shell'
+                     if host == '169.254.199.119' else b'')
+        connection = Connection('', password='secret')
+        result, gateway = find_local_connection(connection, Mock(), discover=discover,
+                                                finder=partial(find_ssh, probe=probe))
+        self.assertEqual(result.host, '169.254.199.119')
+        self.assertEqual(result.source_ip, '192.168.1.200')
+        self.assertEqual(gateway, '192.168.1.131')
+
+    def test_lan_gateway_and_qnx_ssh_can_use_different_addresses_in_the_subnet(self):
+        adapter = LanAddress('Wi-Fi', ipaddress.IPv4Interface('192.168.1.200/25'))
+        probes = []
+        def probe(host, *args):
+            probes.append(host)
+            if host == '192.168.1.140':
+                return b'SSH-2.0-QNX_Secure_Shell'
+            return b'SSH-2.0-OpenSSH' if host == '192.168.1.241' else b''
+
+        result, _ = find_local_connection(Connection('', password='secret'), Mock(),
+            discover=Mock(return_value=[('192.168.1.131', adapter)]), finder=partial(find_ssh, probe=probe))
+
+        self.assertEqual(result.host, '192.168.1.140')
+        self.assertNotIn('192.168.1.127', probes)
+        self.assertNotIn('192.168.1.128', probes)
+        self.assertNotIn('192.168.1.255', probes)
+
+    def test_multiple_lan_gateways_with_closed_ssh_require_manual_choice(self):
+        adapter = LanAddress('Wi-Fi', ipaddress.IPv4Interface('192.168.1.200/24'))
+        with self.assertRaisesRegex(RelayError, 'несколько шлюзов BMW'):
+            find_local_connection(Connection('', password='secret'), Mock(),
+                discover=Mock(return_value=[('192.168.1.131', adapter), ('192.168.1.132', adapter)]),
+                finder=Mock(return_value=None))
+
     def test_activation_once_then_verified_discovered_host(self):
         result = self.call(Mock(side_effect=[None, None, None, '169.254.199.119']))
         self.assertEqual(result.host, '169.254.199.119')
@@ -311,6 +385,20 @@ class ActivationFlowTests(unittest.TestCase):
             self.call(finder)
         self.assertEqual(finder.call_count, 2)
         self.verifier.assert_not_called()
+
+    def test_unknown_service_response_can_be_followed_by_a_verified_ssh_login(self):
+        self.activator.side_effect = UnknownRelayCommandError(0x84)
+        result = self.call(Mock(side_effect=[None, None, '169.254.199.119']))
+        self.assertEqual(result.host, '169.254.199.119')
+        self.verifier.assert_called_once()
+        self.activator.assert_called_once()
+
+    def test_unknown_service_response_without_ssh_preserves_the_protocol_error(self):
+        self.activator.side_effect = UnknownRelayCommandError(0x84)
+        with self.assertRaisesRegex(UnknownRelayCommandError, '0x84'):
+            self.call(Mock(return_value=None))
+        self.verifier.assert_not_called()
+        self.activator.assert_called_once()
 
     def test_manual_source_ip_is_preserved_for_verification(self):
         self.connection.source_ip = '169.254.199.50'

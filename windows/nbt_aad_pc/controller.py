@@ -11,6 +11,12 @@ from .releases import PackageError
 from .ssh import RemoteError, RemoteExitError, Session, on_omap
 from .installed import installed_versions
 from .i18n import tr
+from .diagnostics import restart as diagnostic_restart
+from .relay import RelaySettings
+
+
+class UnsupportedHeadUnitError(RemoteError):
+    pass
 
 
 @dataclass
@@ -20,29 +26,48 @@ class Connection:
     password: str = ''
     source_ip: str = ''
 
-    def validate(self):
-        try:
-            ipaddress.ip_address(self.host)
-        except ValueError:
-            raise ValueError(tr('Неверный IP головного устройства.')) from None
+    def validate(self, *, allow_auto=False, require_password=True):
+        if self.host or not allow_auto:
+            try:
+                ipaddress.ip_address(self.host)
+            except ValueError:
+                raise ValueError(tr('Неверный IP головного устройства.')) from None
         if not 1 <= self.port <= 65535:
             raise ValueError(tr('Неверный порт SSH.'))
-        if not self.password:
+        if require_password and not self.password:
             raise ValueError(tr('Введите пароль root.'))
         if self.source_ip:
             ipaddress.IPv4Address(self.source_ip)
 
 
 def detect(session):
-    output = session.run('uname -s; uname -n', stream=False).decode().splitlines()
+    try:
+        output = session.run('uname -s; uname -n', stream=False).decode().splitlines()
+    except RemoteExitError as exc:
+        raise RemoteError(tr('После входа по SSH не удалось определить систему и узел ГУ. ') + str(exc)) from exc
     if len(output) != 2 or output[0] != 'QNX':
         raise RemoteError(tr('Ожидалось подключение к QNX на NBT Evo.'))
     node = output[1].split('.')[0]
     if node not in ('hu-omap', 'hu-jacinto'):
         raise RemoteError(tr('Неизвестный узел QNX: ') + output[1])
-    session.run(on_omap(node, 'test -d /fs/sda0/opt/hmi/ID5'), stream=False)
-    credentials = session.run(on_omap(node, 'echo NBT_AAD_SHELL_PID=$$; pidin -p $$ -F "%a %W"'),
-                              stream=False).decode().splitlines()
+    try:
+        layout = session.run(on_omap(node, 'if test -d /fs/sda0/opt/hmi/ID5; then echo ID5; '
+                                     'else echo ID5_MISSING; fi'), stream=False).strip()
+    except RemoteExitError as exc:
+        raise RemoteError(tr('Вход по SSH выполнен на %s. Проверка каталога /fs/sda0/opt/hmi/ID5 '
+                             'на hu-omap не прошла. ') % node + str(exc)) from exc
+    if layout == b'ID5_MISSING':
+        raise UnsupportedHeadUnitError(tr('На ГУ отсутствует каталог интерфейса ID5 (/fs/sda0/opt/hmi/ID5). '
+                                          'Для установки NBT-AAD требуется NBT Evo с прошивкой ID5 или ID6. '
+                                          'Штатная прошивка ID4 не поддерживается.'))
+    if layout != b'ID5':
+        raise RemoteError(tr('ГУ вернуло неожиданный ответ при проверке интерфейса ID5/ID6.'))
+    try:
+        credentials = session.run(on_omap(node, 'echo NBT_AAD_SHELL_PID=$$; pidin -p $$ -F "%a %W"'),
+                                  stream=False).decode().splitlines()
+    except RemoteExitError as exc:
+        raise RemoteError(tr('Вход по SSH выполнен на %s. Не удалось проверить права на hu-omap через pidin. ')
+                          % node + str(exc)) from exc
     marker = re.fullmatch(r'NBT_AAD_SHELL_PID=([0-9]+)', credentials[0]) if credentials else None
     if not marker:
         raise RemoteError(tr('Не удалось определить PID проверяемой оболочки ГУ.'))
@@ -101,16 +126,20 @@ LD_LIBRARY_PATH="/opt/sys/lib:/opt/core/lib:/opt/car/lib:/opt/os/lib:/opt/share/
 
 
 class Installer:
-    def __init__(self, script, state, log, confirm, session_factory=Session):
+    def __init__(self, script, state, log, confirm, session_factory=Session, resetter=None):
         self.script, self.state = Path(script), Path(state)
         self.log, self.confirm, self.session_factory = log, confirm, session_factory
+        self.resetter = resetter or (lambda connection: diagnostic_restart(
+            RelaySettings(source_ip=connection.source_ip), self.log))
 
     def execute(self, action, connection, package=None, reboot=True, removal='keep'):
         if action not in ('install', 'uninstall', 'status', 'restart'):
             raise ValueError(tr('Неизвестная операция.'))
-        connection.validate()
+        connection.validate(allow_auto=action == 'restart', require_password=action != 'restart')
         if removal not in ('keep', 'purge'):
             raise ValueError(tr('Неизвестный режим удаления.'))
+        if action == 'restart':
+            return self.resetter(connection)
         script, files = b'', {}
         if action != 'restart':
             script = self.script.read_bytes()
@@ -142,9 +171,6 @@ class Installer:
                 self.log(tr('Версия прошивки NBT Evo: ') + version.decode('ascii'))
             else:
                 self.log(tr('Версию прошивки NBT Evo прочитать не удалось.'))
-            if action == 'restart':
-                self.log(tr('Отправка команды перезагрузки ГУ…'))
-                return restart(session, node)
             if action == 'status':
                 # No staging or writes to the HU in status mode.
                 command = on_omap(node, '/bin/sh -s -- status')
@@ -165,6 +191,9 @@ class Installer:
                 self.log(tr('Передача и проверка %s (%s/%s)') % (name, index, len(files)))
                 session.upload(stage + '/' + name, data, node=node)
             command = '/bin/sh ' + shlex.quote(stage + '/nbt-aad.sh') + ' ' + action + ' --source ' + shlex.quote(stage)
+            if (action == 'install' and 'pf_aa' not in files and b'--pf-embedded' in script
+                    and b'(built into nbt-aad): Android Auto' in files['nbt-aad']):
+                command += ' --pf-embedded'
             if action == 'uninstall':
                 command += ' --keep-config' if removal == 'keep' else ' --purge'
             self.log(tr('Проверка установки без изменений…'))
@@ -200,7 +229,10 @@ class Installer:
                        tr('NBT-AAD удалён. ') + (tr('Настройки сохранены на ГУ.') if removal == 'keep' else
                        tr('Настройки, резервные копии и временные файлы удалены.')))
             if reboot:
-                message += '\n' + restart(session, node, files_processed=True)
+                try:
+                    message += '\n' + self.resetter(connection)
+                except Exception as exc:
+                    message += '\n' + tr('Файлы обработаны успешно, но перезагрузку подтвердить не удалось: ') + str(exc)
             else:
                 message += tr('\nПерезагрузка отключена в настройках.')
             return message

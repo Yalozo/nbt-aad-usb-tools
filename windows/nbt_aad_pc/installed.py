@@ -2,8 +2,9 @@
 import hashlib
 import re
 import shlex
+from paramiko import SSHException
 from .releases import FILES, MAX_ASSET, list_local_packages, validate_elf, PackageError
-from .ssh import on_omap
+from .ssh import on_omap, RemoteError, RemoteExitError
 from .i18n import tr
 
 
@@ -14,6 +15,46 @@ def embedded_version(data, plugin=False):
                rb'Build: (v[0-9]+(?:\.[0-9]+){1,3}[A-Za-z0-9_.-]*)(?=[ \x00(])')
     versions = sorted({x.decode('ascii') for x in re.findall(pattern, data) if len(x) <= 100})
     return versions[0] if len(versions) == 1 else None
+
+
+def pf_status(session, node, daemon, helper):
+    embedded = not helper
+    data = daemon if embedded else helper
+    pattern = (rb'pf_aa ([0-9]+(?:\.[0-9]+)+) \(built into nbt-aad\): Android Auto'
+               if embedded else rb'pf_aa ([0-9]+(?:\.[0-9]+)+):')
+    versions = {version.decode('ascii') for version in re.findall(pattern, data)}
+    if not data or (embedded and len(versions) != 1):
+        return [tr('PF: утилита настройки в установленном комплекте не обнаружена.')]
+    try:
+        validate_elf(data)
+    except PackageError:
+        return [tr('PF: файл утилиты не является корректным ARM ELF32.')]
+    version = next(iter(versions)) if len(versions) == 1 else tr('версия не определена')
+    lines = [tr('pf_aa встроен в nbt-aad: %s.') % version if embedded
+             else tr('Утилита pf_aa: ') + version + '.']
+    if len(versions) != 1:
+        return lines
+    command = '/opt/aa/nbt-aad --pf-check' if embedded else '/opt/aa/pf_aa --check'
+    code = 0
+    try:
+        output = session.run(on_omap(node, command), stream=False, timeout=30, max_output=1024 * 1024)
+        if output.strip():
+            lines.append(output.decode('utf-8', errors='replace').strip())
+    except RemoteExitError as exc:
+        code = exc.code
+        lines.append(str(exc))
+    except (RemoteError, OSError, SSHException) as exc:
+        lines.append(tr('Не удалось проверить PF. ') + str(exc))
+        return lines
+    if code == 0:
+        lines.append(tr('Проверка PF пройдена.'))
+    elif code == 9:
+        lines.append(tr('Файлы PF проверены. Правила сейчас не активны; требуется перезагрузка ГУ.'))
+    elif code == 7:
+        lines.append(tr('Проверка PF выявила неполную настройку. Подробности выше.'))
+    else:
+        lines.append(tr('Проверка PF завершилась с кодом %s.') % code)
+    return lines
 
 
 def installed_versions(session, node, cache, log):
@@ -40,17 +81,7 @@ def installed_versions(session, node, cache, log):
             continue
         version = embedded_version(data, plugin)
         lines.append(title + ': ' + (version or tr('номер сборки не найден в файле')) + '.')
-    helper = payloads['pf_aa']
-    if helper:
-        try:
-            validate_elf(helper)
-            versions = {v.decode('ascii') for v in re.findall(rb'pf_aa ([0-9]+(?:\.[0-9]+)+):', helper)}
-            version = next(iter(versions)) if len(versions) == 1 else tr('версия не определена')
-            lines.append(tr('Утилита pf_aa: ') + version + tr(' (наличие файла не означает применение правил).'))
-        except PackageError:
-            lines.append(tr('Утилита pf_aa: файл не является корректным ARM ELF32.'))
-    else:
-        lines.append(tr('Утилита pf_aa: отсутствует (в старых релизах её может не быть).'))
+    lines.extend(pf_status(session, node, payloads['nbt-aad'], payloads['pf_aa']))
     digests = {name: hashlib.sha256(data).hexdigest() for name, data in payloads.items()}
     matches = []
     matched_count = 0

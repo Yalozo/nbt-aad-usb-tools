@@ -4,7 +4,8 @@ import shlex
 import subprocess
 import tempfile
 import unittest
-from nbt_aad_pc.controller import Connection, Installer, restart
+from unittest.mock import Mock
+from nbt_aad_pc.controller import Connection, Installer, UnsupportedHeadUnitError, detect, restart
 from nbt_aad_pc.ssh import RemoteError, RemoteExitError, Session
 
 
@@ -13,6 +14,7 @@ class FakeSession:
         self.log = args[-1]
         self.calls, self.uploads, self.closed = [], {}, False
         self.node = 'hu-omap'
+        self.interface_layout = b'ID5\n'
         self.credential_output = b'NBT_AAD_SHELL_PID=42\npid euid\n42 0\n'
         self.firmware = b'NBTevo_N18032I\r\n'
         self.fail_dry = False
@@ -45,6 +47,8 @@ class FakeSession:
             raise RemoteExitError(1, 'mkdir: No such file or directory')
         if self.flat_shmem and 'mkdir' in command and '/dev/shmem/' in command:
             raise RemoteError('Function not implemented')
+        if command.startswith('if test -d /fs/sda0/opt/hmi/ID5;'):
+            return self.interface_layout
         if 'NBT_AAD_SHELL_PID=' in command:
             return self.credential_output
         if command == 'cat /opt/sys/etc/nbt_version.txt':
@@ -91,8 +95,13 @@ class ControllerTest(unittest.TestCase):
         self.script.write_bytes(b'# --source PATH\n')
         self.logs = []
         self.session = FakeSession('', '', '', '', '', self.logs.append)
+        def resetter(connection):
+            self.session.calls.append(('diagnostic-reset', {}))
+            if self.session.fail_reset or self.session.fail_reset_without_ack or self.session.reset_exit_code is not None:
+                raise RemoteError('Diagnostic restart not confirmed')
+            return 'Перезагрузка ГУ запрошена. Дождитесь появления штатного меню.'
         self.installer = Installer(self.script, self.root, self.logs.append, lambda *a: True,
-                                   session_factory=lambda *a: self.session)
+                                   session_factory=lambda *a: self.session, resetter=resetter)
         file = self.root / 'nbt-aad'; file.write_bytes(b'binary')
         class Package:
             def files(self):
@@ -110,11 +119,11 @@ class ControllerTest(unittest.TestCase):
         self.assertIn('завершены', self.execute())
         commands = self.commands()
         self.assertLess(commands.index('--dry-run'), commands.index('test -s /opt/aa'))
-        self.assertLess(commands.index('rm -rf'), commands.index('echo NBT_AAD_RESTART_REQUESTED'))
+        self.assertLess(commands.index('rm -rf'), commands.index('diagnostic-reset'))
         self.assertEqual(len(self.session.uploads), 2)
         self.assertTrue(self.session.closed)
 
-    def test_optional_pf_aa_upload_is_verified_without_applying_rules(self):
+    def test_optional_pf_aa_is_uploaded_for_the_shared_script(self):
         helper = self.root / 'pf_aa'
         helper.write_bytes(b'validated package helper')
         original = self.package.files
@@ -122,7 +131,16 @@ class ControllerTest(unittest.TestCase):
         self.execute()
         self.assertEqual(len(self.session.uploads), 3)
         self.assertIn('test -x /opt/aa/pf_aa', self.commands())
-        self.assertNotIn('pf_aa --install', self.commands())
+        self.assertNotIn('--pf-embedded', self.commands())
+
+    def test_embedded_pf_mode_is_selected_for_both_dry_run_and_install(self):
+        self.script.write_bytes(b'# --source PATH --pf-embedded\n')
+        self.package.files()['nbt-aad'].write_bytes(b'pf_aa 1.3 (built into nbt-aad): Android Auto')
+        self.execute()
+        commands = [command for command, *_ in self.session.calls if ' install --source ' in command]
+        self.assertEqual(len(commands), 2)
+        self.assertTrue(commands[0].endswith(' --pf-embedded --dry-run'))
+        self.assertTrue(commands[1].endswith(' --pf-embedded'))
 
     def test_jacinto_stages_transfers_and_runs_on_omap_for_install_and_uninstall(self):
         self.session.node = 'hu-jacinto'
@@ -137,7 +155,7 @@ class ControllerTest(unittest.TestCase):
                 self.assertIn('cat /var/opt/nbt-aad-pc-', commands)
                 self.assertIn(action + ' --source /var/opt/nbt-aad-pc-', commands)
                 self.assertIn('rm -rf /var/opt/nbt-aad-pc-', commands)
-                self.assertIn('echo NBT_AAD_RESTART_REQUESTED', commands)
+                self.assertIn('diagnostic-reset', commands)
 
     def test_purge_preparation_failure_never_reports_partial_deletion(self):
         self.session.node = 'hu-jacinto'
@@ -181,7 +199,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_reset_disconnect_is_distinguished_from_install_failure(self):
         self.session.fail_reset = True
-        self.assertIn('Команда перезагрузки отправлена', self.execute())
+        self.assertIn('Файлы обработаны успешно', self.execute())
 
     def test_uninstall_does_not_require_downloaded_package(self):
         self.installer.execute('uninstall', self.connection)
@@ -206,7 +224,7 @@ class ControllerTest(unittest.TestCase):
 
     def test_restart_can_be_disabled(self):
         self.execute(reboot=False)
-        self.assertNotIn('appreset', self.commands())
+        self.assertNotIn('diagnostic-reset', self.commands())
 
     def test_standalone_restart_needs_no_script_or_package_and_makes_no_install_changes(self):
         self.script.unlink()
@@ -216,8 +234,8 @@ class ControllerTest(unittest.TestCase):
         self.assertFalse(self.session.uploads)
         self.assertNotIn('mkdir', self.commands())
         self.assertNotIn('--source', self.commands())
-        self.assertIn('on -f /net/hu-omap', self.commands())
-        self.assertTrue(self.session.closed)
+        self.assertEqual(self.commands(), 'diagnostic-reset')
+        self.assertFalse(self.session.closed)
 
     def test_standalone_restart_failure_is_an_error_without_file_success_claim(self):
         for flag in ('fail_reset_without_ack', 'reset_exit_code'):
@@ -229,9 +247,12 @@ class ControllerTest(unittest.TestCase):
                 setattr(self.session, flag, False if flag.startswith('fail') else None)
         self.assertFalse(self.session.uploads)
 
-    def test_standalone_restart_can_disconnect_after_acknowledgment(self):
-        self.session.fail_reset = True
-        self.assertIn('Команда перезагрузки отправлена', self.execute('restart'))
+    def test_standalone_restart_does_not_require_ssh_host_or_password(self):
+        self.connection.host = ''
+        self.connection.password = ''
+        self.installer.session_factory = Mock(side_effect=AssertionError('SSH must not be used'))
+        self.assertIn('Перезагрузка ГУ запрошена', self.execute('restart'))
+        self.installer.session_factory.assert_not_called()
 
     def test_reset_error_after_install_keeps_confirmed_file_result(self):
         self.session.reset_exit_code = 1
@@ -269,6 +290,31 @@ class ControllerTest(unittest.TestCase):
         self.assertIn('pidin -p $$ -F', commands)
         self.assertNotIn('id -u', commands)
         self.assertNotIn('printf', commands)
+
+    def test_detection_reports_which_remote_check_failed(self):
+        for replies, message in (
+                ([], 'не удалось определить систему и узел ГУ'),
+                ([b'QNX\nhu-omap\n'], r'hu-omap.*Проверка каталога /fs/sda0/opt/hmi/ID5'),
+                ([b'QNX\nhu-jacinto\n', b'ID5\n'], r'hu-jacinto.*проверить права на hu-omap через pidin')):
+            with self.subTest(message=message):
+                session = Mock()
+                session.run.side_effect = [*replies, RemoteExitError(1, '')]
+                with self.assertRaisesRegex(RemoteError, message + r'.*код 1'):
+                    detect(session)
+                self.assertEqual(session.run.call_count, len(replies) + 1)
+
+    def test_missing_id5_interface_reports_unsupported_head_unit_before_upload(self):
+        for node in ('hu-omap', 'hu-jacinto'):
+            with self.subTest(node=node):
+                self.session.node = node
+                self.session.interface_layout = b'ID5_MISSING\r\n'
+                self.session.calls.clear()
+                with self.assertRaisesRegex(UnsupportedHeadUnitError, 'прошивка ID4 не поддерживается'):
+                    self.execute()
+                self.assertFalse(self.session.uploads)
+                self.assertNotIn('mkdir', self.commands())
+                self.assertNotIn('pidin', self.commands())
+                self.assertTrue(self.session.closed)
 
     def test_nonroot_empty_or_mismatched_credentials_stop_before_upload(self):
         for output in (b'NBT_AAD_SHELL_PID=42\n42 1000\n', b'',

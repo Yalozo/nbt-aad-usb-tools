@@ -1,0 +1,28 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'ru.nbtaad.prototype'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'ru.nbtaad.prototype'
+        minSdk 23
+        targetSdk 28
+        versionCode 16
+        versionName '1.0.10'
+    }
+}
+
+dependencies {
+    implementation 'com.squareup.okhttp3:okhttp:3.12.13'
+    implementation 'com.github.mwiede:jsch:0.2.21'
+    testImplementation 'junit:junit:4.13.2'
+}
+
+// Package the same installer script used on Windows and macOS.
+def installerAssets = layout.buildDirectory.dir('generated/installer-assets')
+def copyInstaller = tasks.register('copyInstaller', Copy) {
+    from rootProject.file('../nbt-aad.sh')
+    into installerAssets
+}
+android.sourceSets.main.assets.srcDir(installerAssets)
+tasks.named('preBuild').configure { dependsOn(copyInstaller) }

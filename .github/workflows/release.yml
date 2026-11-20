@@ -60,6 +60,9 @@ jobs:
                 body: '## Русский\n\n' +
                   'Бесплатный установщик беспроводного Android Auto для BMW и MINI с NBT Evo. ' +
                   'Выберите язык в правом верхнем углу. Путь к журналу и кнопка отправки остаются видимыми при уменьшении окна.\n\n' +
+                  'Поддержаны поиск ГУ по Ethernet и Wi-Fi, сохранение сетевого маршрута при открытии SSH, ' +
+                  'проверка встроенного PF и восстановление конфигурации при полной очистке. ' +
+                  'Перезагрузка выполняется через UDS ECUReset 11 01, включая работу при закрытом SSH.\n\n' +
                   'В журнале теперь видны VIN автомобиля из ответа шлюза, VIN из ответа ГУ и версия прошивки NBT Evo после входа по SSH. ' +
                   'При ретрофите VIN автомобиля и ГУ могут отличаться. Кнопка отправки прикладывает журнал вместе с VIN.\n\n' +
                   'Перед установкой включите A4A и REMOTE_HMI (aktiv) в разделе 3000 HMI кодирования ГУ. ' +
@@ -77,6 +80,8 @@ jobs:
                   '## English\n\n' +
                   'Free wireless Android Auto installer for BMW and MINI with NBT Evo. ' +
                   'Choose the language at the top right. The log path and Send Log stay visible when the window shrinks.\n\n' +
+                  'Includes Ethernet and Wi-Fi discovery, preserved routing during SSH activation, embedded PF verification, ' +
+                  'and PF cleanup during full removal. Restart uses UDS ECUReset 11 01 and works with SSH closed.\n\n' +
                   'The log now records the vehicle VIN from the gateway, the VIN from the head unit reply, and the NBT Evo firmware version after SSH login. ' +
                   'A retrofitted head unit may have a different VIN. Send Log attaches the log with these entries.\n\n' +
                   'Before installation, enable A4A and REMOTE_HMI (aktiv) under 3000 HMI in the head unit coding. ' +

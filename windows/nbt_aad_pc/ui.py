@@ -14,9 +14,10 @@ from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 import webbrowser
 from . import __version__
-from .controller import Connection, Installer
+from .controller import Connection, Installer, UnsupportedHeadUnitError
 from .relay import RelaySettings
 from .unlocker import open_ssh
+from .diagnostics import restart as diagnostic_restart
 from .i18n import LANGUAGES, tr, using_language
 from .paths import state_directory
 from .tooltips import Tooltip
@@ -31,11 +32,9 @@ SUPPORT_EMAIL = 'avyalozo@gmail.com'
 CAR_PREPARATION_NOTE = 'Подключите кабель ENET к автомобилю и включите зажигание.'
 SSH_INTERNET_NOTE = 'Стабильный интернет нужен для открытия SSH на ГУ, если он ещё закрыт.'
 DOWNLOADED_COLOR = '#14623b'
-ETHERNET_HELP = ('Поле необязательное. Оставьте пустым, если ГУ находится автоматически. '
-                 'Если на ПК несколько адаптеров и поиск идёт не через ENET, откройте ipconfig '
-                 '(на Mac — настройки сети) и укажите IPv4-адрес адаптера, к которому подключён ENET. '
-                 'Программа привяжет к этому адаптеру поиск ГУ и SSH. Интернет использует '
-                 'обычный сетевой маршрут, например Wi-Fi.')
+ETHERNET_HELP = ('Оставьте IP-адреса пустыми для автоматического поиска по активным '
+                 'интерфейсам Ethernet и Wi-Fi. Если здесь указан IPv4 компьютера, поиск пройдёт '
+                 'только через этот адрес. Этот же адрес используется для исходящего SSH-подключения.')
 BUTTON_HELP = {
     'Состояние': 'Проверяет установленные версии программы и плагина, файлы и запущенный процесс. '
         'При закрытом SSH автоматически открывает доступ.',
@@ -48,9 +47,9 @@ BUTTON_HELP = {
     'Очистить ГУ': 'Полностью удаляет NBT-AAD: программу, плагин, настройки, резервные копии '
         'нашего установщика, его временные загрузки и известные журналы/файлы состояния. '
         'Восстановление из этих копий станет невозможно. Требуется подтверждение. '
-        'Если pf_aa применялся отдельно, сначала нужно восстановить его правила. '
+        'Очистка также убирает стандартные правила pf_aa из сетевого фильтра. '
         'Это не заводской сброс: SSH, CarPlay и сопряжения Bluetooth сохраняются.',
-    'Перезагрузить ГУ': 'Отправляет отдельную команду перезагрузки ГУ через SSH. '
+    'Перезагрузить ГУ': 'Отправляет ECUReset 11 01 для ГУ 0x63 через диагностический шлюз. '
         'Не устанавливает и не удаляет Android Auto. Не зависит от флажка перезагрузки после установки. '
         'Дождитесь загрузки штатного меню.',
     'Скачать заранее': 'Скачивает выбранный интернет-релиз на компьютер и проверяет его файлы. '
@@ -134,7 +133,7 @@ class App:
             button.bind('<Button-1>', lambda event, url=url: webbrowser.open(url))
         connection = ttk.Frame(frame)
         connection.pack(fill='x')
-        self.host = tk.StringVar(value=config.get('host', '169.254.199.99'))
+        self.host = tk.StringVar(value=config.get('host', ''))
         self.port = tk.StringVar(value=str(config.get('port', 22)))
         self.password = tk.StringVar(value='ts&SK412')
         for column, (label, variable, width, secret) in enumerate([
@@ -300,6 +299,8 @@ class App:
             try:
                 with using_language(self.language):
                     self.events.put(('done', function()))
+            except UnsupportedHeadUnitError as exc:
+                self.events.put(('incompatible_head_unit', str(exc)))
             except Exception as exc:
                 self.events.put(('error', str(exc)))
         threading.Thread(target=worker, daemon=True).start()
@@ -321,20 +322,19 @@ class App:
                     self.update_release_list()
                 elif kind == 'package_downloaded':
                     self.update_release_list()
-                elif kind == 'ssh_verified':
-                    self.host.set(data.host)
-                    self.config.update(host=data.host, port=data.port)
-                    self.save_preferences()
-                elif kind in ('done', 'error'):
+                elif kind in ('done', 'error', 'incompatible_head_unit'):
                     self.busy = False
                     self.progress.stop()
-                    if kind == 'error':
+                    if kind != 'done':
                         self.update_release_list()
                         self.set_status('Операция остановлена — смотрите журнал')
                         self.write(self.tr('ОШИБКА: ') + data)
                         detail = data.replace(self.secret, self.tr('[пароль скрыт]')) if self.secret else data
-                        messagebox.showerror(self.tr('Операция не завершена'), detail +
-                            self.tr('\n\nПри ошибке открытия SSH автоматического повтора нет. Не повторяйте установку при незавершённом откате.'), parent=self.root)
+                        if kind == 'incompatible_head_unit':
+                            messagebox.showerror(self.tr('Несовместимое ГУ'), detail, parent=self.root)
+                        else:
+                            messagebox.showerror(self.tr('Операция не завершена'), detail +
+                                self.tr('\n\nПри ошибке открытия SSH автоматического повтора нет. Не повторяйте установку при незавершённом откате.'), parent=self.root)
                     else:
                         self.update_controls()
                         self.set_status('Готово')
@@ -344,7 +344,7 @@ class App:
             pass
         self.poll_after = self.root.after(70, self.poll)
 
-    def snapshot(self):
+    def snapshot(self, *, require_password=True):
         try:
             port = int(self.port.get())
         except ValueError:
@@ -352,10 +352,10 @@ class App:
         connection = Connection(self.host.get().strip(), port, self.password.get(),
                                 self.source_ip.get().strip())
         with using_language(self.language):
-            connection.validate()
+            connection.validate(allow_auto=True, require_password=require_password)
         self.secret = connection.password
         # Password deliberately excluded.
-        self.config.update(host=connection.host, port=connection.port)
+        self.config['port'] = connection.port
         self.save_preferences()
         return connection
 
@@ -374,7 +374,7 @@ class App:
         self.save_preferences()
 
     def save_preferences(self):
-        config = {'host': self.config.get('host', '169.254.199.99'),
+        config = {'host': self.host.get().strip(),
                   'port': self.config.get('port', 22),
                   'release_package': self.preferred_release,
                   'gateway': self.gateway.get().strip(),
@@ -424,7 +424,7 @@ class App:
                 'Выполнить полное удаление?'), parent=self.root):
                 return
         try:
-            connection = self.snapshot()
+            connection = self.snapshot(require_password=action != 'restart')
             settings = RelaySettings(self.gateway.get().strip(), connection.source_ip)
             with using_language(self.language):
                 settings.validate()
@@ -435,9 +435,10 @@ class App:
         preview, reboot = self.preview.get(), self.reboot.get()
         def work():
             package = self.get_package(preview, selected) if action == 'install' else None
-            verified = open_ssh(connection, settings, self.state, self.confirm, self.log)
-            self.events.put(('ssh_verified', verified))
-            installer = Installer(installer_script(), self.state, self.log, self.confirm)
+            verified = connection if action == 'restart' else open_ssh(connection, settings, self.state, self.confirm, self.log)
+            installer = Installer(installer_script(), self.state, self.log, self.confirm,
+                resetter=lambda selected: diagnostic_restart(
+                    RelaySettings(settings.gateway, selected.source_ip), self.log))
             return installer.execute('uninstall' if action == 'purge' else action,
                                      verified, package, reboot, removal=removal)
         self.start('Перезагрузка головного устройства…' if action == 'restart' else 'Работа с головным устройством…', work)

@@ -7,7 +7,7 @@ LC_ALL=C
 export LC_ALL
 umask 077
 
-VERSION=0.4.2
+VERSION=0.4.5
 REMOTE_NODE=/net/hu-omap
 FS_ROOT=/fs/sda0
 AA=/opt/aa
@@ -21,6 +21,7 @@ LOCK=/var/opt/nbt-aad-usb-tools.lock
 RAM=/dev/shmem
 TMP=/tmp
 PF_FALLBACK=/etc/pf.conf
+PFCTL=/bin/pfctl
 FILES='libNbtAad.so NbtAad.manifest NbtAad.xml NbtAad_ALL_Texts.zip NbtAad_ALL_Images.zip'
 
 ACTION=
@@ -34,6 +35,11 @@ BACKUP=
 VAR_BACKUP=
 LOCKED=0
 ACTIVE=0
+PF_EMBEDDED=0
+PF_TOOL=
+PF_PATH=
+PF_TOUCHED=0
+PF_CLEANUP=0
 REMOVE_MODE=archive
 
 say() {
@@ -45,14 +51,15 @@ exists() { [ -e "$1" ] || [ -L "$1" ]; }
 
 usage() {
     cat <<'EOF'
-NBT-AAD USB Tools 0.4.2
+NBT-AAD USB Tools 0.4.5
 Usage: sh nbt-aad.sh install|uninstall|status [options]
   --usb /mnt/umass...   Select one USB drive explicitly
   --source PATH        Use a private /var/opt/nbt-aad-pc-<32 hex> SSH upload
   --dry-run            Validate and show the plan without changing anything
   --restart-hmi        Run OnOffDSICommander appreset after successful changes
+  --pf-embedded        Use verified nbt-aad --pf-install / --pf-check if pf_aa is absent
   --keep-config        Uninstall, retaining /opt/aa configuration and /var/opt/aa
-  --purge              Uninstall and erase NBT-AAD settings, backups and runtime files
+  --purge              Remove NBT-AAD PF rules, application files, settings and backups
   --help               Show this help
 
 install also updates an existing installation, preserving its settings.
@@ -79,6 +86,7 @@ parse_args() {
             SOURCE=$2; shift ;;
         --dry-run) DRY_RUN=1 ;;
         --restart-hmi) RESTART=1 ;;
+        --pf-embedded) PF_EMBEDDED=1 ;;
         --keep-config|--purge)
             [ "$REMOVE_MODE" = archive ] || die 'Choose only one removal mode.'
             case "$1" in --keep-config) REMOVE_MODE=keep ;; --purge) REMOVE_MODE=purge ;; esac ;;
@@ -93,6 +101,7 @@ parse_args() {
 parse_args "$@"
 [ -n "$ACTION" ] || { usage; exit 1; }
 [ "$REMOVE_MODE" = archive ] || [ "$ACTION" = uninstall ] || die 'Removal flags require uninstall.'
+[ "$PF_EMBEDDED" -eq 0 ] || [ "$ACTION" = install ] || die '--pf-embedded requires install.'
 
 # Only the documented head-unit node is permitted. In particular, this script
 # must not modify a laptop or the other processor in the head unit.
@@ -160,9 +169,14 @@ EOF
 
 if [ "$ACTION" = status ]; then
     say "NBT-AAD USB Tools $VERSION"
-    for target in "$AA/nbt-aad" "$AA/pf_aa" "$AA/pf.bak" "$PLUGIN" "$SETTINGS"; do
+    for target in "$AA/nbt-aad" "$AA/pf.bak" "$PLUGIN" "$SETTINGS"; do
         if exists "$target"; then say "Present: $target"; else say "Absent:  $target"; fi
     done
+    if exists "$AA/pf_aa"; then
+        say "Standalone PF utility: $AA/pf_aa"
+    else
+        say 'No standalone PF file. The nbt-aad binary may provide embedded PF commands.'
+    fi
     pids=$(daemon_pids) || exit 1
     say "Daemon PID(s): ${pids:-none}"
     say "Backups: $BACKUPS ; $VAR_BACKUPS"
@@ -301,6 +315,28 @@ if [ "$ACTION" = install ]; then
         command -v "$tool" >/dev/null 2>&1 || die "Required command is missing: $tool"
     done
     validate_payload
+    if [ -n "$SOURCE" ] && exists "$USB/pf_aa"; then
+        PF_TOOL=standalone
+    elif [ "$PF_EMBEDDED" -eq 1 ]; then
+        PF_TOOL=embedded
+    elif [ -n "$SOURCE" ]; then
+        say 'No PF utility in this release. Skipping PF configuration.'
+    fi
+fi
+
+if [ -n "$PF_TOOL" ]; then
+    PF_PATH=$FS_ROOT/etc/pf.conf
+    if ! exists "$PF_PATH"; then PF_PATH=$PF_FALLBACK; fi
+    [ -f "$PF_PATH" ] && [ -r "$PF_PATH" ] && [ ! -L "$PF_PATH" ] \
+        || die 'Cannot safely back up pf.conf. Check the filter configuration before installation.'
+    for pf_file in "$AA/nbt-aad.env" "$AA/pf.bak"; do
+        if exists "$pf_file"; then
+            [ -f "$pf_file" ] && [ ! -L "$pf_file" ] && [ -r "$pf_file" ] \
+                || die "Expected a readable regular file: $pf_file"
+        fi
+    done
+    ! exists "$AA/nbt-aad.env.pf_aa-new" || die 'A temporary PF environment file exists. Check the previous PF operation.'
+    say 'PF plan: install and verify rules before restarting the head unit.'
 fi
 
 # sync is absent on confirmed stock NBT Evo images. When provided, failures
@@ -343,32 +379,64 @@ if [ "$REMOVE_MODE" = purge ]; then
 fi
 pids=$(daemon_pids) || exit 1
 say "Running daemon PID(s): ${pids:-none} (will receive SIGTERM, no forced kill)."
-# pf_aa is deployed as an optional utility, never executed by this installer.
-# If someone used it separately, do not erase the only restoration backup while
-# AA rules still exist in the system firewall. This preflight is read-only.
-pf_backup_found=0
-if [ "$REMOVE_MODE" = purge ]; then
+pf_without_aad_rules() {
+    # The standalone and embedded pf_aa append these same rules. Remove the
+    # generated lines from the current file, which may have newer local edits.
+    # Source: Supra-iDrive6-Android-Auto/milestone-7/tools/pf_aa.hpp.
+    sed -e '/^# Android Auto wireless (NBT-AAD): TCP 5277, both directions, on the CarPlay AP (uap0) and the Wi-Fi Direct group (wfd0)[[:space:]]*$/d' \
+        -e '/^pass quick on uap0 proto tcp from 172\.16\.224\/24 to 172\.16\.224\.1 port 5277 keep state[[:space:]]*$/d' \
+        -e '/^pass quick on uap0 proto tcp from 172\.16\.224\.1 to 172\.16\.224\/24 port 5277 keep state[[:space:]]*$/d' \
+        -e '/^pass quick on wfd0 proto tcp from 172\.16\.222\/24 to 172\.16\.222\.1 port 5277 keep state[[:space:]]*$/d' \
+        -e '/^pass quick on wfd0 proto tcp from 172\.16\.222\.1 to 172\.16\.222\/24 port 5277 keep state[[:space:]]*$/d' "$1"
+}
+
+plan_purge_pf() {
+    pf_backup_found=0
     for pf_backup in "$AA/pf.bak" "$BACKUPS"/*/aa/pf.bak \
-        "$BACKUPS"/*/failed-aa/pf.bak "$BACKUPS"/*/staged-aa/pf.bak; do
-        if exists "$pf_backup"; then pf_backup_found=1; fi
+        "$BACKUPS"/*/failed-aa/pf.bak "$BACKUPS"/*/staged-aa/pf.bak \
+        "$BACKUPS"/*/pf.conf.before; do
+        if exists "$pf_backup"; then pf_backup_found=1; break; fi
     done
-fi
-if [ "$pf_backup_found" -eq 1 ]; then
-    pf_config=$FS_ROOT/etc/pf.conf
-    [ -r "$pf_config" ] || pf_config=$PF_FALLBACK
-    [ -r "$pf_config" ] || die 'Cannot inspect pf.conf; pf.bak must be preserved. Restore PF rules before full cleanup.'
-    while IFS= read -r pf_line || [ -n "$pf_line" ]; do
-        pf_rule=${pf_line%%#*}
+    PF_PATH=$FS_ROOT/etc/pf.conf
+    if ! exists "$PF_PATH"; then PF_PATH=$PF_FALLBACK; fi
+    if [ ! -f "$PF_PATH" ] || [ ! -r "$PF_PATH" ] || [ -L "$PF_PATH" ]; then
+        [ "$pf_backup_found" -eq 0 ] && ! exists "$PF_PATH" && return 0
+        die 'Cannot safely inspect pf.conf. PF backups and all application files are preserved.'
+    fi
+    pf_current=$(cat "$PF_PATH") || die 'Cannot read pf.conf.'
+    case "$pf_current" in *5277*) ;; *) return 0 ;; esac
+    command -v sed >/dev/null 2>&1 || die 'sed is unavailable. Cannot prepare the PF configuration for cleanup.'
+    pf_clean=$(pf_without_aad_rules "$PF_PATH") || die 'Cannot prepare the PF configuration for cleanup.'
+    if [ "$pf_clean" = "$pf_current" ] && [ "$pf_backup_found" -eq 0 ]; then return 0; fi
+    # Unrecognized 5277 rules on the AA interfaces may have been added by hand.
+    # Keep the recovery files in that case. Rules on other interfaces can stay.
+    while IFS= read -r pf_line; do
+        pf_rule=" ${pf_line%%#*} "
+        case "$pf_rule" in *[![:alnum:]_]pass[![:alnum:]_]*) ;; *) continue ;; esac
+        case "$pf_rule" in *[![:alnum:]_]5277[![:alnum:]_]*) ;; *) continue ;; esac
         case "$pf_rule" in
-            *pass*5277*) die 'PF rules for Android Auto remain in pf.conf. Restore them with pf_aa --uninstall before full cleanup; pf.bak and all application files are preserved.' ;;
+            *[![:alnum:]_]uap0[![:alnum:]_]*|*[![:alnum:]_]wfd0[![:alnum:]_]*) ;;
+            *[![:alnum:]_]on[![:alnum:]_]*) continue ;;
         esac
-    done < "$pf_config"
-fi
+        die 'Custom Android Auto PF rules remain in pf.conf. Restore them before full cleanup; PF backups and all application files are preserved.'
+    done <<EOF
+$pf_clean
+EOF
+    if [ "$pf_clean" != "$pf_current" ]; then
+        if [ ! -x "$PFCTL" ]; then
+            PFCTL=$(command -v pfctl) || die 'pfctl is unavailable. Cannot validate the PF configuration.'
+        fi
+        command -v diff >/dev/null 2>&1 || die 'diff is unavailable. Cannot verify the PF configuration.'
+        PF_CLEANUP=1
+        say "PF plan: remove the NBT-AAD rules from $PF_PATH and verify the remaining configuration."
+    fi
+}
 if [ "$ACTION" = uninstall ] && [ "$REMOVE_MODE" != purge ] && ! exists "$AA" && ! exists "$PLUGIN" && ! exists "$SETTINGS"; then
     say 'Already uninstalled. No changes.'
     exit 0
 fi
 if [ "$DRY_RUN" -eq 1 ]; then
+    if [ "$REMOVE_MODE" = purge ]; then plan_purge_pf; fi
     say 'DRY RUN: validation passed. No remount, signals, application/configuration writes, or restart.'
     exit 0
 fi
@@ -381,6 +449,18 @@ rollback() {
     rollback_failed=0
     if [ -f "$BACKUP/COMMITTED" ]; then
         mv "$BACKUP/COMMITTED" "$BACKUP/COMMIT_INTERRUPTED" || rollback_failed=1
+    fi
+    if [ "$PF_TOUCHED" -eq 1 ]; then
+        if ! diff "$BACKUP/pf.conf.before" "$PF_PATH" >/dev/null 2>&1; then
+            if [ -L "$PF_PATH" ] || [ ! -f "$PF_PATH" ] \
+                || ! cat "$BACKUP/pf.conf.before" > "$PF_PATH" \
+                || ! diff "$BACKUP/pf.conf.before" "$PF_PATH" >/dev/null 2>&1; then
+                say "PF rollback failed. Exact previous configuration: $BACKUP/pf.conf.before"
+                rollback_failed=1
+            else
+                say 'Previous pf.conf restored.'
+            fi
+        fi
     fi
     # Inspect completed renames instead of flags set after mv: a signal can
     # arrive after a successful rename but before the shell's next assignment.
@@ -443,6 +523,7 @@ trap 'exit 143' 15
 mkdir "$LOCK" 2>/dev/null || die "Another run or stale lock exists: $LOCK (see README)."
 LOCKED=1
 echo "$$" > "$LOCK/pid"
+if [ "$REMOVE_MODE" = purge ]; then plan_purge_pf; fi
 
 # Match the official install guide on the local hu-omap node.
 mount -o remount rw "$FS_ROOT" || die 'Cannot remount the application filesystem writable.'
@@ -453,6 +534,16 @@ mkdir "$BACKUP" || die 'Cannot create a unique backup directory.'
 LOG=$BACKUP/operation.log
 say "NBT-AAD USB Tools $VERSION; $ACTION; backup: $BACKUP"
 echo "$ACTION" > "$BACKUP/action"
+
+if [ "$PF_CLEANUP" -eq 1 ]; then
+    cp -p "$PF_PATH" "$BACKUP/pf.conf.before" || die 'Cannot back up pf.conf.'
+    diff "$PF_PATH" "$BACKUP/pf.conf.before" >/dev/null 2>&1 || die 'pf.conf backup verification failed.'
+    pf_snapshot=$(cat "$BACKUP/pf.conf.before") || die 'Cannot read the pf.conf backup.'
+    [ "$pf_snapshot" = "$pf_current" ] || die 'pf.conf changed during cleanup planning.'
+    pf_without_aad_rules "$BACKUP/pf.conf.before" > "$BACKUP/pf.conf.cleaned" || die 'Cannot prepare cleaned pf.conf.'
+    [ -s "$BACKUP/pf.conf.cleaned" ] || die 'Cleaned pf.conf is empty. PF cleanup stopped.'
+    "$PFCTL" -n -f "$BACKUP/pf.conf.cleaned" || die 'PF rejected the proposed configuration. PF cleanup stopped.'
+fi
 
 if [ "$ACTION" = uninstall ] && [ "$REMOVE_MODE" = keep ] && [ -d "$AA" ]; then
     mkdir "$BACKUP/staged-aa"
@@ -473,7 +564,7 @@ if [ "$ACTION" = install ]; then
         cp "$USB/pf_aa" "$BACKUP/staged-aa/pf_aa"
         chmod 755 "$BACKUP/staged-aa/pf_aa"
         diff "$USB/pf_aa" "$BACKUP/staged-aa/pf_aa" >/dev/null 2>&1 || die 'pf_aa copy verification failed.'
-        say 'Optional pf_aa staged and verified. Network rules are not applied automatically.'
+        say 'Optional pf_aa staged and verified.'
     fi
     for item in $FILES; do
         cp "$PAYLOAD/$item" "$BACKUP/staged-plugin/$item"
@@ -509,11 +600,65 @@ if [ "$ACTION" = uninstall ] && [ "$REMOVE_MODE" != keep ] && exists "$SETTINGS"
 fi
 mkdir -p "${PLUGIN%/*}"
 ACTIVE=1
+if [ "$PF_CLEANUP" -eq 1 ]; then
+    [ -f "$PF_PATH" ] && [ ! -L "$PF_PATH" ] \
+        && diff "$BACKUP/pf.conf.before" "$PF_PATH" >/dev/null 2>&1 || die 'pf.conf changed during cleanup.'
+    PF_TOUCHED=1
+    cat "$BACKUP/pf.conf.cleaned" > "$PF_PATH" || die 'Cannot write cleaned pf.conf.'
+    diff "$BACKUP/pf.conf.cleaned" "$PF_PATH" >/dev/null 2>&1 || die 'Cleaned pf.conf verification failed.'
+    "$PFCTL" -n -f "$PF_PATH" || die 'PF rejected the written configuration.'
+    say 'NBT-AAD PF rules removed from disk. Restart the head unit to apply the configuration.'
+fi
 if exists "$AA"; then mv "$AA" "$BACKUP/aa"; fi
 if exists "$PLUGIN"; then mv "$PLUGIN" "$BACKUP/plugin"; fi
 if [ "$ACTION" = install ]; then
     mv "$BACKUP/staged-aa" "$AA"
     mv "$BACKUP/staged-plugin" "$PLUGIN"
+    if [ -n "$PF_TOOL" ]; then
+        [ -f "$PF_PATH" ] && [ ! -L "$PF_PATH" ] || die 'pf.conf changed during installation.'
+        cp -p "$PF_PATH" "$BACKUP/pf.conf.before" || die 'Cannot back up pf.conf.'
+        diff "$PF_PATH" "$BACKUP/pf.conf.before" >/dev/null 2>&1 || die 'pf.conf backup verification failed.'
+        if [ "$PF_TOOL" = standalone ]; then
+            set -- "$AA/pf_aa" --install --check
+        else
+            set -- "$AA/nbt-aad" --pf-install --pf-check
+        fi
+        say "Installing Android Auto packet filter rules with $1 $2. Backup: $BACKUP/pf.conf.before"
+        PF_TOUCHED=1
+        pf_install_rc=0
+        "$1" "$2" --pf "$PF_PATH" || pf_install_rc=$?
+        [ "$pf_install_rc" -eq 0 ] || die "PF installation failed (code $pf_install_rc)."
+        pf_check_rc=0
+        "$1" "$3" --pf "$PF_PATH" || pf_check_rc=$?
+        case "$pf_check_rc" in
+            0) say 'PF configuration verified.' ;;
+            9) say 'PF configuration verified on disk. Reboot the head unit to activate the rules.' ;;
+            *) die "PF verification failed (code $pf_check_rc)." ;;
+        esac
+        # The iDrive launcher reads only the first 15 assignments.
+        [ -f "$AA/nbt-aad.env" ] && [ ! -L "$AA/nbt-aad.env" ] || die 'PF environment file is missing.'
+        pf_slots=0
+        pf_enabled=0
+        while IFS= read -r pf_setting || [ -n "$pf_setting" ]; do
+            case "$pf_setting" in
+                \#*|'') continue ;;
+                *=*) pf_slots=$((pf_slots + 1)) ;;
+                *) continue ;;
+            esac
+            [ "$pf_slots" -le 15 ] || break
+            case "$pf_setting" in
+                NBT_KEEP_PF=*)
+                    pf_value=${pf_setting#NBT_KEEP_PF=}
+                    while :; do
+                        case "$pf_value" in *[[:space:]]) pf_value=${pf_value%?} ;; *) break ;; esac
+                    done
+                    if [ "$pf_value" = 1 ]; then pf_enabled=1; fi
+                    break ;;
+            esac
+        done < "$AA/nbt-aad.env"
+        [ "$pf_enabled" -eq 1 ] || die 'NBT_KEEP_PF=1 is not effective among the first 15 settings.'
+        [ -s "$AA/pf.bak" ] && [ ! -L "$AA/pf.bak" ] || die 'PF restore file is missing or empty.'
+    fi
 else
     if [ "$REMOVE_MODE" = keep ]; then
         if exists "$BACKUP/staged-aa"; then mv "$BACKUP/staged-aa" "$AA"; fi

@@ -101,16 +101,18 @@ class NativeUITest(unittest.TestCase):
                      patch('nbt_aad_pc.ui.messagebox.askyesno', return_value=True), \
                      patch.object(app, 'start', side_effect=lambda title, work: work()):
                     execute = installer.return_value.execute
-                    execute.side_effect = lambda *args, **kwargs: opener.assert_called_once()
                     for action in ('status', 'install', 'uninstall', 'purge', 'restart'):
                         with self.subTest(action=action):
                             opener.reset_mock()
                             execute.reset_mock()
                             app.operate(action)
                             execute.assert_called_once()
+                            if action == 'restart': opener.assert_not_called()
+                            else: opener.assert_called_once()
                             args = execute.call_args.args
                             self.assertEqual(args[0], 'uninstall' if action == 'purge' else action)
-                            self.assertIs(args[1], result)
+                            if action == 'restart': self.assertEqual(args[1].host, '')
+                            else: self.assertIs(args[1], result)
                             self.assertIs(args[2], get_package.return_value if action == 'install' else None)
                     get_package.assert_called_once()
                     opener.side_effect = RuntimeError('SSH недоступен')
@@ -120,7 +122,7 @@ class NativeUITest(unittest.TestCase):
                     installer.assert_not_called()
                 root.after_cancel(app.poll_after)
                 app.poll()
-                self.assertEqual(app.host.get(), '169.254.199.119')
+                self.assertEqual(app.host.get(), '')
                 saved = (Path(directory) / 'settings.json').read_text()
                 self.assertNotIn('private-test-password', saved)
                 self.assertEqual(json.loads(saved)['gateway'], '169.254.199.1')
@@ -138,7 +140,7 @@ class NativeUITest(unittest.TestCase):
             app.password.set('unique-secret-password')
             app.snapshot()
             app.write('unique-secret-password test redaction')
-            self.assertEqual(app.host.get(), '169.254.199.99')
+            self.assertEqual((app.host.get(), app.gateway.get(), app.source_ip.get()), ('', '', ''))
             self.assertTrue(app.reboot.get())
             self.assertFalse(app.preview.get())
             self.assertEqual([button.cget('text') for button in app.action_buttons], [
@@ -146,7 +148,7 @@ class NativeUITest(unittest.TestCase):
             self.assertFalse(hasattr(app, 'ssh_open_button'))
             self.assertEqual(app.download_button.master, app.release.master)
             self.assertFalse(hasattr(app, 'offline'))
-            self.assertTrue(any('ipconfig' in tooltip.text and 'Поле необязательное' in tooltip.text
+            self.assertTrue(any('автоматического поиска' in tooltip.text and 'интерфейсам Ethernet' in tooltip.text
                                 for tooltip in app.tooltips))
             config = (Path(directory) / 'settings.json').read_text(encoding='utf-8')
             self.assertNotIn('password', config)

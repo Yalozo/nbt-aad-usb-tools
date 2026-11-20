@@ -63,4 +63,4 @@ fi
 
 Stop if any command reports an error. After successfully restoring the folders, run `sync` if available and restart the head unit. Restoration also restores the previous automatic-start flag. Keep copies until you have verified the result.
 
-If `pf_aa` applied rules separately, use `/opt/aa/pf.bak` or its copy in the archived `aa` folder to restore the packet filter. The file operations above do not restore `/fs/sda0/etc/pf.conf`. Full cleanup protects those backups until the rules are restored. [Restore pf_aa rules](PF-AA.en.md)
+For manual packet filter recovery, use `/opt/aa/pf.bak` or its copy in the archived `aa` folder. The file operations above do not restore `/fs/sda0/etc/pf.conf`. With script 0.4.4, full cleanup removes the standard NBT-AAD rules from the current configuration. [PF setup and recovery](PF-AA.en.md)

@@ -2,8 +2,10 @@
 
 [Русский](README.md) · [macOS guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/macos/README.en.md)
 
-NBT-AAD PC 0.1.16 bundles USB installer 0.4.2. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
+NBT-AAD PC 0.1.19 bundles USB installer 0.4.5. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
 
+
+Version 0.1.17 keeps the discovered LAN gateway and source adapter when SSH is closed. It checks the standard link-local SSH addresses through that adapter and searches the local subnet for QNX when needed. Connect the computer and head unit to the same LAN to use Wi-Fi.
 **Head unit coding before installation.** Enable `A4A = aktiv` and `REMOTE_HMI = aktiv` under `3000 HMI`. Check the NBT-AAD coding requirements for the other settings applicable to your firmware. Without the required coding, HMI may skip the plugin, so the Android Auto menu entry can be missing even after the files were installed successfully. Apply the coding separately with E-Sys, BimmerCode, or another compatible tool. [NBT-AAD coding requirements](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/blob/main/coding-requirements.md)
 
 ## Getting started
@@ -11,7 +13,7 @@ NBT-AAD PC 0.1.16 bundles USB installer 0.4.2. It installs, updates, and removes
 1. Download the Windows x64 ZIP from [GitHub Releases](https://github.com/Yalozo/nbt-aad-usb-tools/releases/latest). Extract it and run `NBT-AAD-PC.exe` on Windows 10 or 11 x64. The installer runs without Python or administrator rights.
 2. Select **English** or **Русский** at the top of the window. The app remembers your choice and updates the controls, help, dialogs, and new log messages immediately.
 3. Plug the ENET cable into the vehicle and turn on the ignition. Keep the cable connected and the head unit powered during file operations. **A stable internet connection is required if SSH on the head unit is closed.** The app checks and opens SSH as needed for each head-unit action.
-4. Use the default head unit address `169.254.199.99:22` and root password `ts&SK412` or enter your own settings. Direct SSH to `169.254.199.119:22` is also supported. Confirm your head unit's SSH key on the first connection. A changed saved key is rejected.
+4. Leave the IP fields blank for automatic discovery or enter your head unit's IP. The standard SSH port is `22` and the username is `root`. Enter your own password if you changed it. Confirm your head unit's SSH key on the first connection.
 5. Select a release or keep the automatic choice, then click **Install / Update**. The app uses a verified local copy or downloads the package and verifies its SHA-256 hashes. It stages the files, runs a dry check, and installs them with backups. Existing settings are kept.
 6. With **Restart head unit on success** selected, the app requests a restart after verifying the result. Wait for the standard menu, then open **Media/Radio → Android Auto**. If pairing fails on the first launch, remove the pairing on both the head unit and phone and pair them again.
 
@@ -25,7 +27,7 @@ Before requesting SSH activation, the app sends a read-only diagnostic request t
 
 Opening closed SSH uses an external online service. Head unit diagnostic responses sent to that service may include the VIN and module information. The root password is used to log in directly to the head unit. The operation stops if activation is declined. If the initial network connection drops, it may retry once before sending the diagnostic request.
 
-Normally you can leave **Diagnostic IP** and **ENET adapter IPv4** blank. If discovery uses the wrong adapter, run `ipconfig` and enter the IPv4 address of the Ethernet adapter connected to ENET. Internet traffic can use another connection, such as Wi-Fi.
+When the head unit IP and diagnostic IP are blank, the app checks active Ethernet and Wi-Fi interfaces with IPv4 one at a time as part of head unit actions. The log lists discovered gateways and interfaces. Setting only **ENET adapter IPv4** limits discovery to that address.
 
 - **Check Releases** fetches the online list. Green **Downloaded** entries are verified local copies in the same list. Use **Show online beta releases** to include online beta releases.
 - **Download Ahead** caches the selected package. Choose that entry to install offline if SSH is already open. Checking the online list and downloading packages require internet access. Package identities include the files' SHA-256 hashes, so new files under an existing tag can appear as a separate build.
@@ -35,7 +37,7 @@ Normally you can leave **Diagnostic IP** and **ENET adapter IPv4** blank. If dis
 - **Status** checks files, running processes, and embedded program and plugin build numbers, including for manual installations. It compares all six files, or seven with `pf_aa`, against cached packages. An exact SHA-256 match identifies the release. A running process alone does not confirm that the phone connected.
 - **Uninstall** removes the program and menu plugin. It keeps configuration in `/opt/aa` and `/var/opt/aa`, including `nbt-aad.env`, and keeps installer backups. Reinstallation reuses the settings.
 - **Full Cleanup** removes NBT-AAD, its settings, installer backups, temporary uploads, and known NBT-AAD logs and state files in RAM. It requires confirmation. It preserves shared HMI caches, system logs, SSH, CarPlay, Bluetooth pairings, and files on the PC or USB drive. Custom installation paths require separate inspection. The loaded plugin may recreate RAM state until the head unit restarts.
-- **Restart Head Unit** sends `OnOffDSICommander appreset` after verifying QNX and root on the target node. It works independently of the post-operation checkbox and needs no package. A disconnect after the restart request is expected. Wait for the menu to return. If temporary SSH closes, the app will check access again before the next operation.
+- **Restart Head Unit** sends UDS ECUReset `11 01` to head unit `0x63` through the diagnostic gateway on TCP 6801. It works with SSH closed and needs no root password. The same method is used after verified installation or removal. A positive `51 01` reply confirms acceptance. Wait for the standard menu.
 
 Uninstall and Full Cleanup need no release download. The restart checkbox applies to both. If cleanup stops partway through, review the log and retry after addressing the reported error. Removed backups cannot be recovered by the installer.
 
@@ -67,8 +69,8 @@ The build creates `windows/dist/NBT-AAD-PC.exe`. `--self-test` checks the bundle
 
 ## Optional pf_aa
 
-If the chosen release includes `pf_aa`, the app verifies its size, SHA-256, and ARM ELF32 header, caches it, and installs it as executable at `/opt/aa/pf_aa`. It does not apply the rules or set `NBT_KEEP_PF` automatically. Re-download a package if its upstream release gains this file later.
+If the chosen release includes `pf_aa`, the app verifies its size, SHA-256, and ARM ELF32 header, caches it, and installs it as executable at `/opt/aa/pf_aa`. Builds with shared script 0.4.3 run `--install` and `--check` over SSH before restarting, using the embedded PF commands if the daemon provides them and the standalone utility is absent. Re-download a package if its upstream release gains this file later.
 
-Ordinary uninstall removes the executable and preserves `pf.bak` and settings. Restore separately applied rules before full cleanup. The installer protects a known backup if the relevant rules remain or the active configuration cannot be read. [Using and restoring pf_aa](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/docs/PF-AA.en.md)
+Ordinary uninstall removes the executable and preserves `pf.bak` and settings. Full cleanup with script 0.4.4 removes the rules generated by `pf_aa` and validates the remaining configuration. The installer protects a known backup if the relevant rules remain or the active configuration cannot be read. [Using and restoring pf_aa](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/docs/PF-AA.en.md)
 
 The installer is MIT-licensed. NBT-AAD is distributed separately by its authors under PolyForm Noncommercial 1.0.0. The project is provided for research use under the terms of the [license](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/LICENSE).
