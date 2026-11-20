@@ -123,6 +123,24 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual(len(self.session.uploads), 2)
         self.assertTrue(self.session.closed)
 
+    def test_persistent_upload_mismatch_never_starts_installer_or_reset(self):
+        run = self.session.run
+        def corrupt_readback(command, **kwargs):
+            result = run(command, **kwargs)
+            if command.startswith('cat /var/opt/nbt-aad-pc-'):
+                return result[:-1]
+            return result
+        self.session.run = corrupt_readback
+        with self.assertRaisesRegex(RemoteError, 'контрольная сумма'):
+            self.execute()
+        writes = [call for call in self.session.calls if call[0].startswith('umask 077; cat > ')]
+        self.assertEqual(len(writes), 2)
+        self.assertEqual(writes[0], writes[1])
+        self.assertNotIn('--dry-run', self.commands())
+        self.assertNotIn(' install --source ', self.commands())
+        self.assertNotIn('diagnostic-reset', self.commands())
+        self.assertTrue(self.session.closed)
+
     def test_optional_pf_aa_is_uploaded_for_the_shared_script(self):
         helper = self.root / 'pf_aa'
         helper.write_bytes(b'validated package helper')

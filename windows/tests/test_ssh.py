@@ -1,12 +1,108 @@
 """Real loopback SSH: RSA/SHA1, binary stdin and host-key verification."""
 from pathlib import Path
+import hashlib
 import shlex
 import socket
 import tempfile
 import threading
 import unittest
+from unittest.mock import Mock, patch
 import paramiko
 from nbt_aad_pc.ssh import Session, RemoteError
+
+
+class CommandCompletionTest(unittest.TestCase):
+    def session(self, stdout=b'', stderr=b'', code=0):
+        channel = Mock()
+        channel.closed = False
+        channel.eof_received = False
+        buffers = [bytearray(stdout), bytearray(stderr)]
+        def read(index, limit):
+            result = bytes(buffers[index][:limit])
+            del buffers[index][:limit]
+            return result
+        channel.recv_ready.side_effect = lambda: bool(buffers[0])
+        channel.recv_stderr_ready.side_effect = lambda: bool(buffers[1])
+        channel.recv.side_effect = lambda size: read(0, size)
+        channel.recv_stderr.side_effect = lambda size: read(1, size)
+        channel.exit_status_ready.return_value = True
+        channel.recv_exit_status.return_value = code
+        session = Session.__new__(Session)
+        session.client = Mock()
+        session.client.get_transport.return_value.open_session.return_value = channel
+        session.log = Mock()
+        return session, channel, buffers
+
+    def test_exit_status_before_late_binary_data_and_stderr_waits_for_eof(self):
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                session, channel, buffers = self.session(b'first\n')
+                tail = bytes(range(256)) * 1024 + b'\nlast\n'
+                def deliver_tail(_):
+                    buffers[0].extend(tail)
+                    buffers[1].extend(b'late warning\n')
+                    channel.eof_received = True
+                with patch('nbt_aad_pc.ssh.time.sleep', side_effect=deliver_tail):
+                    actual = session.run('cat /var/opt/test', stream=stream)
+                self.assertEqual(actual, b'first\n' + tail)
+                self.assertFalse(any(buffers))
+                if stream:
+                    self.assertIn('late warning', '\n'.join(c.args[0] for c in session.log.call_args_list))
+                channel.close.assert_called_once()
+
+    def test_exit_status_without_eof_still_has_a_deadline(self):
+        session, channel, _ = self.session()
+        with patch('nbt_aad_pc.ssh.time.monotonic', side_effect=[0, 0, 2]), \
+                patch('nbt_aad_pc.ssh.time.sleep'):
+            with self.assertRaisesRegex(RemoteError, 'отведённое время'):
+                session.run('cat /var/opt/test', timeout=1)
+        channel.close.assert_called_once()
+
+    def test_closed_without_exit_status_is_an_error(self):
+        session, channel, _ = self.session(code=-1)
+        channel.closed = True
+        with self.assertRaisesRegex(RemoteError, 'без кода завершения'):
+            session.run('cat /var/opt/test')
+        channel.close.assert_called_once()
+
+
+class UploadVerificationTest(unittest.TestCase):
+    def session(self, responses):
+        session = Session.__new__(Session)
+        session.run = Mock(side_effect=responses)
+        session.log = Mock()
+        return session
+
+    def test_one_mismatch_retransmits_then_requires_a_matching_digest(self):
+        data = bytes(range(256)) * 1024
+        session = self.session([b'', data[:-1], b'', data])
+        session.upload('/var/opt/stage/nbt-aad', data, node='hu-jacinto')
+        self.assertEqual(session.run.call_count, 4)
+        writes = session.run.call_args_list[::2]
+        self.assertEqual(writes[0], writes[1])
+        self.assertIn('on -f /net/hu-omap', writes[0].args[0])
+        session.log.assert_called_once()
+        self.assertIn('2/2', session.log.call_args.args[0])
+
+    def test_repeated_mismatch_stops_with_path_sizes_and_both_hashes(self):
+        data, corrupt = b'correct', b'incorrect'
+        session = self.session([b'', corrupt, b'', corrupt])
+        with self.assertRaises(RemoteError) as caught:
+            session.upload('/var/opt/stage/nbt-aad', data)
+        self.assertEqual(session.run.call_count, 4)
+        message = str(caught.exception)
+        for detail in ['/var/opt/stage/nbt-aad', str(len(data)), str(len(corrupt)),
+                       hashlib.sha256(data).hexdigest(), hashlib.sha256(corrupt).hexdigest()]:
+            self.assertIn(detail, message)
+
+    def test_remote_failure_does_not_retry_a_command(self):
+        for responses in ([RemoteError('write failed')], [b'', RemoteError('read failed')]):
+            with self.subTest(responses=responses):
+                session = self.session(responses)
+                with self.assertRaises(RemoteError):
+                    session.upload('/var/opt/stage/nbt-aad', b'data')
+                self.assertEqual(session.run.call_count, len(responses))
+                session.log.assert_not_called()
 
 
 class Handler(paramiko.ServerInterface):

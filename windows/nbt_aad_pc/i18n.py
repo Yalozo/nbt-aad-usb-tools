@@ -169,6 +169,8 @@ ENGLISH = {
     'Соединение закрылось без кода завершения. ': 'The connection closed without an exit status. ',
     'Связь с ГУ по SSH прервана: ': 'The SSH connection to the head unit was interrupted: ',
     'Не совпала контрольная сумма загруженного файла.': 'The uploaded file checksum did not match.',
+    'Файл %s: ожидалось %s байт, SHA-256 %s; получено %s байт, SHA-256 %s.': 'File %s: expected %s bytes, SHA-256 %s; received %s bytes, SHA-256 %s.',
+    ' Повторяю передачу временного файла (2/2).': ' Retrying the temporary file transfer (2/2).',
     'Найдено несколько QNX SSH: %s. Укажите IP нужного ГУ вручную.': 'Multiple QNX SSH servers found: %s. Enter the head unit IP manually.',
     'SSH подтверждён: QNX, %s, root на hu-omap.': 'SSH verified: QNX, %s, root on hu-omap.',
     'Для диагностики и SSH должен использоваться один выбранный IPv4 Ethernet ПК.': 'Diagnostics and SSH must use the same selected ENET adapter IPv4 address.',

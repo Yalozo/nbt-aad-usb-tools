@@ -2,7 +2,7 @@
 
 [Русский](README.md) · [macOS guide](https://github.com/Yalozo/nbt-aad-usb-tools/blob/main/macos/README.en.md)
 
-NBT-AAD PC 0.1.19 bundles USB installer 0.4.5. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
+NBT-AAD PC 0.1.20 bundles USB installer 0.4.5. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
 
 
 Version 0.1.17 keeps the discovered LAN gateway and source adapter when SSH is closed. It checks the standard link-local SSH addresses through that adapter and searches the local subnet for QNX when needed. Connect the computer and head unit to the same LAN to use Wi-Fi.

@@ -1,5 +1,11 @@
 # Changes
 
+## Windows/macOS app 0.1.20
+
+- Wait for SSH EOF or channel close and drain stdout/stderr before accepting an exit status. This fixes incomplete binary readback that could report a checksum mismatch although the uploaded file was intact.
+- Retry a mismatching temporary file transfer once, with mandatory SHA-256 verification. Report the path, byte counts, and expected/received hashes if verification fails. Installation commands are never retried automatically.
+- Cover early exit status, delayed binary data, bounded timeouts, interrupted channels, and persistent mismatches that must stop before installation or restart.
+
 ## Android 1.0.10 / Windows/macOS app 0.1.19 / Shared installer 0.4.5
 
 - Recognize PF utilities embedded in nbt-aad when the release omits a standalone pf_aa file. Run the verified utility's read-only PF check during Status and report pending or incomplete configuration separately.

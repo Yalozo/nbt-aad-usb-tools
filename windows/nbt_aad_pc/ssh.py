@@ -108,7 +108,10 @@ class Session:
                                 line, _, rest = pending.partition(b'\n')
                                 pending = bytearray(rest)
                                 self.log(line.decode('utf-8', errors='replace').rstrip('\r'))
-                if channel.exit_status_ready() and not channel.recv_ready() and not channel.recv_stderr_ready():
+                # An exit-status request does not end the SSH data stream.
+                # Wait for EOF/close, then drain both buffers before returning.
+                if (channel.exit_status_ready() and (channel.eof_received or channel.closed)
+                        and not channel.recv_ready() and not channel.recv_stderr_ready()):
                     break
                 if not received:
                     if channel.closed:
@@ -136,7 +139,16 @@ class Session:
 
     def upload(self, path, data, *, node='hu-omap'):
         quoted = shlex.quote(path)
-        self.run(on_omap(node, 'umask 077; cat > ' + quoted), data=data, stream=False)
-        actual = self.run(on_omap(node, 'cat ' + quoted), stream=False, max_output=len(data)+4096)
-        if hashlib.sha256(actual).digest() != hashlib.sha256(data).digest():
-            raise RemoteError(tr('Не совпала контрольная сумма загруженного файла.'))
+        expected_hash = hashlib.sha256(data).hexdigest()
+        for attempt in range(2):
+            self.run(on_omap(node, 'umask 077; cat > ' + quoted), data=data, stream=False)
+            actual = self.run(on_omap(node, 'cat ' + quoted), stream=False, max_output=len(data)+4096)
+            actual_hash = hashlib.sha256(actual).hexdigest()
+            if actual_hash == expected_hash:
+                return
+            detail = tr('Файл %s: ожидалось %s байт, SHA-256 %s; получено %s байт, SHA-256 %s.') % (
+                path, len(data), expected_hash, len(actual), actual_hash)
+            message = tr('Не совпала контрольная сумма загруженного файла.') + ' ' + detail
+            if attempt == 1:
+                raise RemoteError(message)
+            self.log(message + tr(' Повторяю передачу временного файла (2/2).'))
