@@ -1,24 +1,24 @@
 {
   "application": "NBT-AAD PC",
   "platform": "Windows",
-  "version": "0.1.16",
+  "version": "0.1.19",
   "method": "Pillow ImageGrab single-window capture of the running Tk app",
   "head_unit_connected": false,
   "packages": [
-    {
-      "id": 451756290,
-      "name": "v1.9.112",
-      "tag_name": "v1.9.112",
-      "published_at": "2026-11-19T18:32:37Z",
-      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/v1.9.112",
-      "prerelease": false
-    },
     {
       "id": 452963638,
       "name": "v1.9.115",
       "tag_name": "v1.9.115",
       "published_at": "2026-11-20T17:03:51Z",
       "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/v1.9.115",
+      "prerelease": false
+    },
+    {
+      "id": 453072017,
+      "name": "v1.9.116",
+      "tag_name": "v1.9.116",
+      "published_at": "2026-11-20T18:59:44Z",
+      "html_url": "https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/releases/tag/v1.9.116",
       "prerelease": false
     }
   ]
