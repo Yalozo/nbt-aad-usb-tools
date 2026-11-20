@@ -111,6 +111,7 @@ def open_ssh(connection, settings, state, confirm, log, *, finder=find_ssh,
     if connection.source_ip != settings.source_ip:
         raise ValueError(tr('Для диагностики и SSH должен использоваться один выбранный IPv4 Ethernet ПК.'))
     log(tr('Проверка доступа к головному устройству…'))
+    configured_host = bool(connection.host)
     if not connection.host and not settings.gateway:
         discovered = local_connection_finder(connection, log)
         if discovered:
@@ -127,6 +128,14 @@ def open_ssh(connection, settings, state, confirm, log, *, finder=find_ssh,
         # They must NEVER trigger a diagnostic unlock request.
         log(tr('SSH уже доступен: %s:%s. Проверка входа…') % (existing, connection.port))
         return verifier(replace(connection, host=existing), state, confirm, log)
+    if configured_host and not settings.gateway and connection.port == 22:
+        discovered = local_connection_finder(replace(connection, host=''), log)
+        if discovered:
+            connection, gateway = discovered
+            settings = replace(settings, gateway=gateway, source_ip=connection.source_ip)
+            if connection.host:
+                return verifier(connection, state, confirm, log)
+            connection = replace(connection, host=Connection().host)
     if connection.port != 22:
         raise RelayError(tr('Для автоматического открытия SSH укажите стандартный порт 22.'))
     try:

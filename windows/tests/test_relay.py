@@ -307,6 +307,16 @@ class ActivationFlowTests(unittest.TestCase):
         self.call(Mock(return_value='169.254.199.99'), local_connection_finder=discover)
         discover.assert_not_called()
 
+    def test_stale_saved_host_can_be_rediscovered_after_the_lan_address_changes(self):
+        self.connection.host = '192.168.1.160'
+        self.settings = RelaySettings()
+        current = Connection('192.168.2.160', 22, 'secret', '192.168.2.200')
+        local = Mock(return_value=(current, '192.168.2.131'))
+        result = self.call(Mock(return_value=None), local_connection_finder=local)
+        self.assertIs(result, current)
+        self.assertEqual(local.call_args.args[0].host, '')
+        self.activator.assert_not_called()
+
     def test_closed_ssh_keeps_discovered_gateway_and_source_for_activation(self):
         self.connection.host = ''
         self.settings = RelaySettings()

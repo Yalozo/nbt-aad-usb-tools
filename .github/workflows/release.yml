@@ -1,7 +1,7 @@
 name: Publish desktop release
 on:
   workflow_run:
-    workflows: ['Windows application', 'macOS application']
+    workflows: ['Windows application', 'macOS application', 'Android application']
     types: [completed]
 permissions:
   actions: read
@@ -22,7 +22,7 @@ jobs:
             const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo,
               {owner, repo, head_sha: sha, per_page: 100});
             const selected = {};
-            for (const name of ['Windows application', 'macOS application', 'Checks']) {
+            for (const name of ['Windows application', 'macOS application', 'Android application', 'Checks']) {
               const run = runs.find(r => r.name === name && r.event === 'push' &&
                 r.head_branch === 'main' && r.status === 'completed' && r.conclusion === 'success');
               if (!run) { core.info('Waiting for successful ' + name + ' at ' + sha); return; }
