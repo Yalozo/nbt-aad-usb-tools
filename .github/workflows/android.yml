@@ -3,13 +3,17 @@ on:
   push:
     paths:
       - 'android-prototype/**'
+      - 'windows/**'
+      - 'macos/**'
       - 'nbt-aad.sh'
-      - '.github/workflows/android.yml'
+      - '.github/workflows/**'
   pull_request:
     paths:
       - 'android-prototype/**'
+      - 'windows/**'
+      - 'macos/**'
       - 'nbt-aad.sh'
-      - '.github/workflows/android.yml'
+      - '.github/workflows/**'
   workflow_dispatch:
 permissions:
   contents: read

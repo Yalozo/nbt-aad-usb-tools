@@ -10,6 +10,11 @@ android {
         versionCode 16
         versionName '1.0.10'
     }
+    lint {
+        // APK distribution is through GitHub. Keep the tested ENET behavior
+        // while target SDK migration is handled as a separate compatibility change.
+        disable 'ExpiredTargetSdkVersion'
+    }
 }
 
 dependencies {
