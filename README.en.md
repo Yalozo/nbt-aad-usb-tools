@@ -4,6 +4,8 @@
 
 Install, update, and remove [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on QNX-based NBT Evo ID5/ID6. USB installer **0.4.2** finds the flash drive and automatically forwards from `hu-jacinto` to `hu-omap` when needed.
 
+**Head unit coding before installation.** Enable `A4A = aktiv` and `REMOTE_HMI = aktiv` under `3000 HMI`. Check the NBT-AAD coding requirements for the other settings applicable to your firmware. Without the required coding, HMI may skip the plugin, so the Android Auto menu entry can be missing even after the files were installed successfully. Apply the coding separately with E-Sys, BimmerCode, or another compatible tool. [NBT-AAD coding requirements](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/blob/main/coding-requirements.md)
+
 ## Desktop installer for Windows and macOS
 
 [Download NBT-AAD PC for Windows x64, Mac Apple Silicon, or Mac Intel](https://github.com/Yalozo/nbt-aad-usb-tools/releases/latest)

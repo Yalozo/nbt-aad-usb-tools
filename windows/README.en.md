@@ -4,6 +4,8 @@
 
 NBT-AAD PC 0.1.15 bundles USB installer 0.4.2. It installs, updates, and removes [NBT-AAD](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto) on BMW and MINI vehicles with compatible NBT Evo ID5/ID6. It transfers files over SSH through a wired ENET connection.
 
+**Head unit coding before installation.** Enable `A4A = aktiv` and `REMOTE_HMI = aktiv` under `3000 HMI`. Check the NBT-AAD coding requirements for the other settings applicable to your firmware. Without the required coding, HMI may skip the plugin, so the Android Auto menu entry can be missing even after the files were installed successfully. Apply the coding separately with E-Sys, BimmerCode, or another compatible tool. [NBT-AAD coding requirements](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/blob/main/coding-requirements.md)
+
 ## Getting started
 
 1. Download the Windows x64 ZIP from [GitHub Releases](https://github.com/Yalozo/nbt-aad-usb-tools/releases/latest). Extract it and run `NBT-AAD-PC.exe` on Windows 10 or 11 x64. The installer runs without Python or administrator rights.

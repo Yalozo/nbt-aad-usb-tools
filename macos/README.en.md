@@ -18,6 +18,8 @@ The deployment target is macOS 13 Ventura or later. CI builds and tests the Inte
 
 Before requesting SSH activation, the app checks for a reply from the head unit to a read-only diagnostic request. If only the gateway responds, no activation request is sent. On retrofits, check the head unit’s Ethernet connection (OABR).
 
+**Head unit coding before installation.** Enable `A4A = aktiv` and `REMOTE_HMI = aktiv` under `3000 HMI`. Check the NBT-AAD coding requirements for the other settings applicable to your firmware. Without the required coding, HMI may skip the plugin, so the Android Auto menu entry can be missing even after the files were installed successfully. Apply the coding separately with E-Sys, BimmerCode, or another compatible tool. [NBT-AAD coding requirements](https://github.com/Sq00ky/Supra-iDrive6-Android-Auto/blob/main/coding-requirements.md)
+
 1. Connect the Mac to the vehicle via wired ENET and turn on the ignition. Use a USB Ethernet adapter if needed. Installation requires Ethernet/OABR and root SSH access to the head unit. Keep power and ENET connected throughout the file operation.
 2. The app checks SSH before each head-unit action. **If SSH is closed, the Mac needs a stable internet connection so the app can open it automatically.**
 3. The default head unit address is `169.254.199.99`, port `22`, with user `root` and password `ts&SK412`. Direct access to `169.254.199.119` also works. Enter your own password if you changed it. Confirm the SSH key of your head unit when prompted.
